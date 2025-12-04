@@ -31,6 +31,7 @@ inBfsID     ::MVector{3, IT}        三角形所在的三个基函数的ID
 mutable struct TriangleInfo{IT<: Integer, FT<:AbstractFloat} <: SurfaceCellType{IT, FT}
     triID       ::IT
     ε           ::Complex{FT}
+    Zs          ::Complex{FT}
     area        ::FT
     verticesID  ::MVec3D{IT}
     vertices    ::MMatrix{3, 3, FT, 9}
@@ -49,6 +50,7 @@ end
 """
 function TriangleInfo{IT, FT}(triID::IT = zero(IT)) where {IT <: Integer, FT<:AbstractFloat}
     ε           =    one(Complex{FT})*ε_0
+    Zs          =    zero(Complex{FT})
     area::FT    =    zero(FT)
     verticesID  =    zero(MVec3D{IT})
     vertices    =    zero(MMatrix{3, 3, FT, 9})
@@ -58,7 +60,7 @@ function TriangleInfo{IT, FT}(triID::IT = zero(IT)) where {IT <: Integer, FT<:Ab
     edgev̂       =    zero(MMatrix{3, 3, FT, 9})
     edgen̂       =    zero(MMatrix{3, 3, FT, 9})
     inBfsID     =    zero(MVec3D{IT})
-    return TriangleInfo{IT, FT}(triID,  ε,  area,  verticesID, vertices    ,
+    return TriangleInfo{IT, FT}(triID,  ε,  Zs,  area,  verticesID, vertices    ,
                                 center, facen̂, edgel, edgev̂, 
                                 edgen̂, inBfsID)
 end

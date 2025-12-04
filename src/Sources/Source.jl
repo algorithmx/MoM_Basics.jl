@@ -21,5 +21,7 @@ include("Planewave.jl")
 include("MagneticDipole.jl")
 # 天线阵
 include("AntettaArray.jl")
+# 场提取
+include("FieldExtraction.jl")
 
 ##

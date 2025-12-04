@@ -18,6 +18,14 @@ using Test
     @testset "Sources" begin
         include("sources.jl")
     end
+
+    @testset "Triangle IBC Extensions" begin
+        include("triangles_ibc.jl")
+    end
+
+    @testset "Field Extraction" begin
+        include("field_extraction.jl")
+    end
     rm("results"; force = true, recursive = true)
 
 end
