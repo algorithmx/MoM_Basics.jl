@@ -5,6 +5,7 @@ using StaticArrays, OffsetArrays, SparseArrays
 using LinearAlgebra, FastGaussQuadrature, Statistics
 using .Threads, ThreadsX
 using Rotations
+using NPZ
 
 export  Vec3D, SVec3D, MVec3D, random_rhat,
         ∠Info, θϕInfo, r̂func, θhatfunc, ϕhatfunc, r̂θϕInfo,
