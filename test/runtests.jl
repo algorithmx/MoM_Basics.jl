@@ -23,8 +23,8 @@ using Test
         include("triangles_ibc.jl")
     end
 
-    @testset "Field Extraction" begin
-        include("field_extraction.jl")
+    @testset "Consolidated Extraction" begin
+        include("consolidated_extraction.jl")
     end
     rm("results"; force = true, recursive = true)
 

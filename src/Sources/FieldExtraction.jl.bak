@@ -1,0 +1,254 @@
+"""
+    ExcitationFieldData{FT, CT}
+
+Structure to store excitation field data at specific points.
+"""
+struct ExcitationFieldData{FT<:AbstractFloat, CT<:Complex{FT}}
+    npoints     ::Int
+    positions   ::Vector{SVec3D{FT}}
+    E           ::Vector{SVec3D{CT}}
+    H           ::Vector{SVec3D{CT}}
+end
+
+"""
+    calExcitationFields(geosInfo, source::ExcitingSource)
+
+Calculate E and H fields from `source` at the centroids of geometry elements in `geosInfo`.
+Returns an `ExcitationFieldData` object.
+"""
+function calExcitationFields(geosInfo, source::ExcitingSource)
+    # Flatten nested vectors if necessary
+    geos_flat = []
+    if eltype(geosInfo) <: TriangleInfo
+        geos_flat = geosInfo
+    elseif eltype(geosInfo) <: Vector
+        for part in geosInfo
+            append!(geos_flat, part)
+        end
+    else
+         # Try to iterate assuming it's iterable
+         for geo in geosInfo
+             push!(geos_flat, geo)
+         end
+    end
+    
+    npoints = length(geos_flat)
+    
+    # Determine types from the first element or use Precision.FT
+    FT = Precision.FT
+    CT = Complex{FT}
+    
+    positions = Vector{SVec3D{FT}}(undef, npoints)
+    E         = Vector{SVec3D{CT}}(undef, npoints)
+    H         = Vector{SVec3D{CT}}(undef, npoints)
+
+    Threads.@threads for i in 1:npoints
+        geo = geos_flat[i]
+        if hasproperty(geo, :center)
+            r = SVec3D{FT}(geo.center) # Convert MVec to SVec if needed
+            positions[i] = r
+            E[i] = sourceEfield(source, r)
+            H[i] = sourceHfield(source, r)
+        end
+    end
+    
+    return ExcitationFieldData{FT, CT}(npoints, positions, E, H)
+end
+
+"""
+    SurfaceCurrentData{FT, CT}
+
+Structure to store surface current density at specific points (e.g., triangle centroids),
+aligned with ExcitationFieldData layout.
+"""
+struct SurfaceCurrentData{FT<:AbstractFloat, CT<:Complex{FT}}
+    npoints     ::Int
+    positions   ::Vector{SVec3D{FT}}
+    J           ::Vector{SVec3D{CT}}
+end
+
+# Internal: evaluate RWG basis value at r on a given triangle with local-id idx_in_geo (1..3)
+# f(r) = sgn * (l / (2A)) * (r - r_free), where sgn is encoded in tri.edgel[idx_in_geo]
+# and r_free is the vertex opposite the supporting edge for this RWG on this triangle.
+@inline function _rwg_value_at(r::SVec3D{FT}, bf, tri, idx_in_geo::Int) where {FT}
+    sgn = sign(tri.edgel[idx_in_geo])
+    l   = bf.edgel
+    A   = tri.area
+    r_free = SVec3D{FT}(tri.vertices[:, idx_in_geo])
+    return (sgn * l / (2A)) * (r - r_free)
+end
+
+"""
+    calSurfaceCurrents(geosInfo, bfsInfo, ICoeff)
+
+Compute surface current density J at centroids for the provided geometry by
+summing RWG contributions with coefficients ICoeff. Returns SurfaceCurrentData.
+"""
+function calSurfaceCurrents(geosInfo, bfsInfo, ICoeff)
+    # Flatten geometry like calExcitationFields does
+    geos_flat = []
+    if eltype(geosInfo) <: TriangleInfo
+        geos_flat = geosInfo
+    elseif eltype(geosInfo) <: Vector
+        for part in geosInfo
+            append!(geos_flat, part)
+        end
+    else
+        for geo in geosInfo
+            push!(geos_flat, geo)
+        end
+    end
+
+    # Flatten RWG list
+    bfs_flat = []
+    if eltype(bfsInfo) <: RWG
+        bfs_flat = bfsInfo
+    elseif eltype(bfsInfo) <: Vector
+        for part in bfsInfo
+            append!(bfs_flat, part)
+        end
+    else
+        for bf in bfsInfo
+            push!(bfs_flat, bf)
+        end
+    end
+
+    FT = Precision.FT
+    CT = Complex{FT}
+
+    npoints = length(geos_flat)
+    positions = Vector{SVec3D{FT}}(undef, npoints)
+    J         = Vector{SVec3D{CT}}(undef, npoints)
+
+    # Build triangle -> list of (bf, idx_in_geo) map
+    tri_to_bfs = Dict{Int, Vector{Tuple{Int,Int}}}() # store (bfID, localIdx)
+    for bf in bfs_flat
+        # first triangle association
+        t1 = bf.inGeo[1]
+        t1 != 0 && push!(get!(tri_to_bfs, t1, Vector{Tuple{Int,Int}}()), (bf.bfID, 1))
+        # second if different and non-zero
+        t2 = bf.inGeo[2]
+        (t2 != 0 && t2 != t1) && push!(get!(tri_to_bfs, t2, Vector{Tuple{Int,Int}}()), (bf.bfID, 2))
+    end
+
+    # Fast lookup for bf by id
+    # RWG.bfID appears 1-based and compact; build an index array
+    maxid = maximum(bf.bfID for bf in bfs_flat)
+    bf_by_id = Vector{Any}(undef, maxid)
+    for bf in bfs_flat
+        bf_by_id[bf.bfID] = bf
+    end
+
+    Threads.@threads for i in 1:npoints
+        tri = geos_flat[i]
+        r = SVec3D{FT}(tri.center)
+        positions[i] = r
+        acc = SVec3D{CT}(0,0,0)
+        lst = get(tri_to_bfs, tri.triID, nothing)
+        if lst !== nothing
+            for (bfid, locidx) in lst
+                bf = bf_by_id[bfid]
+                val = _rwg_value_at(r, bf, tri, locidx)
+                acc += ICoeff[bfid] * val
+            end
+        end
+        J[i] = acc
+    end
+
+    return SurfaceCurrentData{FT, CT}(npoints, positions, J)
+end
+
+"""
+    saveSurfaceCurrents(filename::String, data::SurfaceCurrentData)
+
+Save surface current data to CSV (default) or NPZ if filename ends with .npz.
+"""
+function saveSurfaceCurrents(filename::String, data::SurfaceCurrentData)
+    if endswith(filename, ".npz")
+        n = data.npoints
+        pos_arr = Matrix{eltype(eltype(data.positions))}(undef, n, 3)
+        J_arr   = Matrix{eltype(eltype(data.J))}(undef, n, 3)
+        for i in 1:n
+            pos_arr[i,1] = data.positions[i][1]; pos_arr[i,2] = data.positions[i][2]; pos_arr[i,3] = data.positions[i][3]
+            J_arr[i,1]   = data.J[i][1];        J_arr[i,2]   = data.J[i][2];        J_arr[i,3]   = data.J[i][3]
+        end
+        npzwrite(filename, Dict("positions"=>pos_arr, "J"=>J_arr))
+    else
+        open(filename, "w") do io
+            println(io, "rx,ry,rz,Jx_real,Jx_imag,Jy_real,Jy_imag,Jz_real,Jz_imag")
+            for i in 1:data.npoints
+                r = data.positions[i]; j = data.J[i]
+                @printf io "%.6e,%.6e,%.6e," r[1] r[2] r[3]
+                @printf io "%.6e,%.6e,%.6e,%.6e,%.6e,%.6e\n" real(j[1]) imag(j[1]) real(j[2]) imag(j[2]) real(j[3]) imag(j[3])
+            end
+        end
+    end
+    nothing
+end
+
+"""
+    saveSurfaceCurrents(filename::String, geosInfo, bfsInfo, ICoeff)
+
+Convenience wrapper: compute currents then save.
+"""
+function saveSurfaceCurrents(filename::String, geosInfo, bfsInfo, ICoeff)
+    data = calSurfaceCurrents(geosInfo, bfsInfo, ICoeff)
+    saveSurfaceCurrents(filename, data)
+end
+
+"""
+    saveExcitationFields(filename::String, data::ExcitationFieldData)
+
+Save excitation fields to a file. Supports CSV (.csv) and NPZ (.npz) formats.
+"""
+function saveExcitationFields(filename::String, data::ExcitationFieldData)
+    if endswith(filename, ".npz")
+        n = data.npoints
+        
+        # Preallocate matrices (N x 3)
+        # data.positions elements are SVec3D{FT} (which index as [1], [2], [3])
+        pos_arr = Matrix{eltype(eltype(data.positions))}(undef, n, 3)
+        E_arr   = Matrix{eltype(eltype(data.E))}(undef, n, 3)
+        H_arr   = Matrix{eltype(eltype(data.H))}(undef, n, 3)
+        
+        for i in 1:n
+            pos_arr[i, 1] = data.positions[i][1]
+            pos_arr[i, 2] = data.positions[i][2]
+            pos_arr[i, 3] = data.positions[i][3]
+            
+            E_arr[i, 1] = data.E[i][1]
+            E_arr[i, 2] = data.E[i][2]
+            E_arr[i, 3] = data.E[i][3]
+            
+            H_arr[i, 1] = data.H[i][1]
+            H_arr[i, 2] = data.H[i][2]
+            H_arr[i, 3] = data.H[i][3]
+        end
+        
+        npzwrite(filename, Dict("positions" => pos_arr, "E" => E_arr, "H" => H_arr))
+        
+    else
+        open(filename, "w") do io
+            println(io, "rx,ry,rz,Ex_real,Ex_imag,Ey_real,Ey_imag,Ez_real,Ez_imag,Hx_real,Hx_imag,Hy_real,Hy_imag,Hz_real,Hz_imag")
+            for i in 1:data.npoints
+                r = data.positions[i]
+                e = data.E[i]
+                h = data.H[i]
+                @printf io "%.6e,%.6e,%.6e," r[1] r[2] r[3]
+                @printf io "%.6e,%.6e,%.6e,%.6e,%.6e,%.6e," real(e[1]) imag(e[1]) real(e[2]) imag(e[2]) real(e[3]) imag(e[3])
+                @printf io "%.6e,%.6e,%.6e,%.6e,%.6e,%.6e\n" real(h[1]) imag(h[1]) real(h[2]) imag(h[2]) real(h[3]) imag(h[3])
+            end
+        end
+    end
+    nothing
+end
+
+"""
+    saveExcitationFields(filename::String, geosInfo, source::ExcitingSource)
+
+Calculate and save excitation fields to a CSV file.
+"""
+function saveExcitationFields(filename::String, geosInfo, source::ExcitingSource)
+    data = calExcitationFields(geosInfo, source)
+    saveExcitationFields(filename, data)
+end

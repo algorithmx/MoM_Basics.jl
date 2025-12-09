@@ -1,40 +1,28 @@
 """
-    ExcitationFieldData{FT, CT}
+    FieldData{FT, CT}
 
-Structure to store excitation field data at specific points.
+Unified structure to store field data (incident fields, currents, etc.) at specific points.
 """
-struct ExcitationFieldData{FT<:AbstractFloat, CT<:Complex{FT}}
+struct FieldData{FT<:AbstractFloat, CT<:Complex{FT}}
     npoints     ::Int
     positions   ::Vector{SVec3D{FT}}
-    E           ::Vector{SVec3D{CT}}
-    H           ::Vector{SVec3D{CT}}
+    fields      ::Dict{Symbol, Vector{SVec3D{CT}}}
 end
 
-"""
-    calExcitationFields(geosInfo, source::ExcitingSource)
+FieldData{FT, CT}(npoints::Int, positions::Vector{SVec3D{FT}}) where {FT, CT} = 
+    FieldData{FT, CT}(npoints, positions, Dict{Symbol, Vector{SVec3D{CT}}}())
 
-Calculate E and H fields from `source` at the centroids of geometry elements in `geosInfo`.
-Returns an `ExcitationFieldData` object.
 """
-function calExcitationFields(geosInfo, source::ExcitingSource)
-    # Flatten nested vectors if necessary
-    geos_flat = []
-    if eltype(geosInfo) <: TriangleInfo
-        geos_flat = geosInfo
-    elseif eltype(geosInfo) <: Vector
-        for part in geosInfo
-            append!(geos_flat, part)
-        end
-    else
-         # Try to iterate assuming it's iterable
-         for geo in geosInfo
-             push!(geos_flat, geo)
-         end
-    end
+    calIncidentFields(geosInfo, source::ExcitingSource)
+
+Calculate E and H incident fields from `source` at the centroids of geometry elements.
+Returns `FieldData`.
+"""
+function calIncidentFields(geosInfo, source::ExcitingSource)
+    # Flatten geometry
+    geos_flat = _flatten_geos_basics(geosInfo)
     
     npoints = length(geos_flat)
-    
-    # Determine types from the first element or use Precision.FT
     FT = Precision.FT
     CT = Complex{FT}
     
@@ -45,69 +33,133 @@ function calExcitationFields(geosInfo, source::ExcitingSource)
     Threads.@threads for i in 1:npoints
         geo = geos_flat[i]
         if hasproperty(geo, :center)
-            r = SVec3D{FT}(geo.center) # Convert MVec to SVec if needed
+            r = SVec3D{FT}(geo.center)
             positions[i] = r
             E[i] = sourceEfield(source, r)
             H[i] = sourceHfield(source, r)
         end
     end
     
-    return ExcitationFieldData{FT, CT}(npoints, positions, E, H)
+    fd = FieldData{FT, CT}(npoints, positions)
+    fd.fields[:E_inc] = E
+    fd.fields[:H_inc] = H
+    return fd
+end
+
+function _flatten_geos_basics(geosInfo::AbstractVector{<:VSCellType})
+    return geosInfo
+end
+
+function _flatten_geos_basics(geosInfo::AbstractVector{<:AbstractVector})
+    return reduce(vcat, geosInfo)
+end
+
+function _flatten_geos_basics(geosInfo)
+    # Fallback for generic iterables
+    geos_flat = []
+    for part in geosInfo
+        if isa(part, AbstractVector)
+             append!(geos_flat, part)
+        else
+             push!(geos_flat, part)
+        end
+    end
+    return geos_flat
+end
+
+# Backward compatibility aliases
+calExcitationFields(geosInfo, source) = calIncidentFields(geosInfo, source)
+
+
+# Internal: evaluate RWG basis value at r on a given triangle with local-id idx_in_geo (1..3)
+@inline function _rwg_value_at(r::SVec3D{FT}, bf, tri, idx_in_geo::Int) where {FT}
+    sgn = sign(tri.edgel[idx_in_geo])
+    l   = bf.edgel
+    A   = tri.area
+    r_free = SVec3D{FT}(tri.vertices[:, idx_in_geo])
+    return (sgn * l / (2A)) * (r - r_free)
+end
+
+
+"""
+    mergeFieldData!(target::FieldData, source::FieldData)
+
+Merge fields from `source` into `target`. Requires matching number of points.
+Note: Does not rigorously check if positions are identical, assumes consistent mesh usage.
+"""
+function mergeFieldData!(target::FieldData, source::FieldData)
+    if target.npoints != source.npoints
+        error("Cannot merge FieldData: different number of points (target: $(target.npoints), source: $(source.npoints))")
+    end
+    merge!(target.fields, source.fields)
+    return target
 end
 
 """
-    saveExcitationFields(filename::String, data::ExcitationFieldData)
+    saveFieldData(filename::String, data::FieldData)
 
-Save excitation fields to a file. Supports CSV (.csv) and NPZ (.npz) formats.
+Save field data to CSV or NPZ.
 """
-function saveExcitationFields(filename::String, data::ExcitationFieldData)
+function saveFieldData(filename::String, data::FieldData)
     if endswith(filename, ".npz")
         n = data.npoints
+        dict_to_save = Dict{String, Any}()
         
-        # Preallocate matrices (N x 3)
-        # data.positions elements are SVec3D{FT} (which index as [1], [2], [3])
+        # Save Positions
         pos_arr = Matrix{eltype(eltype(data.positions))}(undef, n, 3)
-        E_arr   = Matrix{eltype(eltype(data.E))}(undef, n, 3)
-        H_arr   = Matrix{eltype(eltype(data.H))}(undef, n, 3)
-        
         for i in 1:n
             pos_arr[i, 1] = data.positions[i][1]
             pos_arr[i, 2] = data.positions[i][2]
             pos_arr[i, 3] = data.positions[i][3]
-            
-            E_arr[i, 1] = data.E[i][1]
-            E_arr[i, 2] = data.E[i][2]
-            E_arr[i, 3] = data.E[i][3]
-            
-            H_arr[i, 1] = data.H[i][1]
-            H_arr[i, 2] = data.H[i][2]
-            H_arr[i, 3] = data.H[i][3]
+        end
+        dict_to_save["positions"] = pos_arr
+        
+        # Save Fields
+        for (key, val) in data.fields
+             f_arr = Matrix{eltype(eltype(val))}(undef, n, 3)
+             for i in 1:n
+                 f_arr[i, 1] = val[i][1]
+                 f_arr[i, 2] = val[i][2]
+                 f_arr[i, 3] = val[i][3]
+             end
+             dict_to_save[string(key)] = f_arr
         end
         
-        npzwrite(filename, Dict("positions" => pos_arr, "E" => E_arr, "H" => H_arr))
+        npzwrite(filename, dict_to_save)
         
     else
         open(filename, "w") do io
-            println(io, "rx,ry,rz,Ex_real,Ex_imag,Ey_real,Ey_imag,Ez_real,Ez_imag,Hx_real,Hx_imag,Hy_real,Hy_imag,Hz_real,Hz_imag")
+            # Construct Header
+            header = "rx,ry,rz"
+            sorted_keys = sort(collect(keys(data.fields)))
+            for k in sorted_keys
+                k_str = string(k)
+                header *= ",$(k_str)x_real,$(k_str)x_imag,$(k_str)y_real,$(k_str)y_imag,$(k_str)z_real,$(k_str)z_imag"
+            end
+            println(io, header)
+            
             for i in 1:data.npoints
                 r = data.positions[i]
-                e = data.E[i]
-                h = data.H[i]
-                @printf io "%.6e,%.6e,%.6e," r[1] r[2] r[3]
-                @printf io "%.6e,%.6e,%.6e,%.6e,%.6e,%.6e," real(e[1]) imag(e[1]) real(e[2]) imag(e[2]) real(e[3]) imag(e[3])
-                @printf io "%.6e,%.6e,%.6e,%.6e,%.6e,%.6e\n" real(h[1]) imag(h[1]) real(h[2]) imag(h[2]) real(h[3]) imag(h[3])
+                @printf io "%.6e,%.6e,%.6e" r[1] r[2] r[3]
+                
+                for k in sorted_keys
+                    val = data.fields[k][i]
+                    @printf io ",%.6e,%.6e,%.6e,%.6e,%.6e,%.6e" real(val[1]) imag(val[1]) real(val[2]) imag(val[2]) real(val[3]) imag(val[3])
+                end
+                print(io, "\n")
             end
         end
     end
     nothing
 end
 
-"""
-    saveExcitationFields(filename::String, geosInfo, source::ExcitingSource)
-
-Calculate and save excitation fields to a CSV file.
-"""
-function saveExcitationFields(filename::String, geosInfo, source::ExcitingSource)
-    data = calExcitationFields(geosInfo, source)
-    saveExcitationFields(filename, data)
+# Wrappers for easier usage
+function saveIncidentFields(filename::String, geosInfo, source::ExcitingSource)
+    data = calIncidentFields(geosInfo, source)
+    saveFieldData(filename, data)
 end
+
+# Backward compatibility wrappers (can be deprecated later)
+saveExcitationFields(filename::String, geosInfo, source::ExcitingSource) = saveIncidentFields(filename, geosInfo, source)
+saveExcitationFields(filename::String, data::FieldData) = saveFieldData(filename, data)
+saveSurfaceCurrents(filename::String, data::FieldData) = saveFieldData(filename, data)
