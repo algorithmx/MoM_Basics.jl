@@ -5,8 +5,162 @@ Unified structure to store field data (incident fields, currents, etc.) at speci
 """
 struct FieldData{FT<:AbstractFloat, CT<:Complex{FT}}
     npoints     ::Int
-    positions   ::Vector{SVec3D{FT}}
+    positions   ::Vector{SVec3D{FT}} # centroid positions
     fields      ::Dict{Symbol, Vector{SVec3D{CT}}}
+end
+
+toFieldData(nt::NamedTuple) = FieldData{eltype(nt.positions[1]), eltype(nt.fields[:J][1])}(nt.npoints, nt.positions, nt.fields)
+
+
+"""
+    triangleConnectivity(tris::AbstractVector{<:TriangleInfo})
+
+Build triangle connectivity using the current in-memory triangle ordering.
+
+Returns a NamedTuple with:
+- `tri_vertices` :: Matrix{Int64} (N×3) vertex IDs per triangle
+- `node_coords` :: Matrix{Float64} (Nnodes×3) node coordinate table, indexed by node ID (1-based)
+- `edge_neighbors_indptr`, `edge_neighbors_indices` :: CSR adjacency for edge-sharing
+- `vertex_neighbors_indptr`, `vertex_neighbors_indices` :: CSR adjacency for vertex-sharing
+- `tri_index_base` :: Int64 (always 1)
+- `node_index_base` :: Int64 (always 1)
+
+Neighbor indices are 1-based triangle indices in `tris`.
+"""
+function triangleConnectivity(tris::AbstractVector{<:TriangleInfo})
+    n = length(tris)
+
+    tri_vertices = Matrix{Int64}(undef, n, 3)
+    # Build a dense node coordinate table indexed by node ID (1-based local IDs).
+    max_vid = Int64(0)
+    @inbounds for i in 1:n
+        vids = tris[i].verticesID
+        v1 = Int64(vids[1]); v2 = Int64(vids[2]); v3 = Int64(vids[3])
+        max_vid = max(max_vid, v1, v2, v3)
+    end
+    node_coords = Matrix{Float64}(undef, max_vid, 3)
+    filled = falses(max_vid)
+
+    edge_to_tris = Dict{Tuple{Int64, Int64}, Vector{Int64}}()
+    vert_to_tris = Dict{Int64, Vector{Int64}}()
+
+    @inbounds for i in 1:n
+        vids = tris[i].verticesID
+        v1 = Int64(vids[1]); v2 = Int64(vids[2]); v3 = Int64(vids[3])
+        tri_vertices[i, 1] = v1
+        tri_vertices[i, 2] = v2
+        tri_vertices[i, 3] = v3
+
+        # Populate node coordinates from triangle vertex coordinates.
+        # Each TriangleInfo stores vertices[:, local] in the same order as verticesID[local].
+        @views begin
+            if !filled[v1]
+                node_coords[v1, 1] = Float64(tris[i].vertices[1, 1])
+                node_coords[v1, 2] = Float64(tris[i].vertices[2, 1])
+                node_coords[v1, 3] = Float64(tris[i].vertices[3, 1])
+                filled[v1] = true
+            end
+            if !filled[v2]
+                node_coords[v2, 1] = Float64(tris[i].vertices[1, 2])
+                node_coords[v2, 2] = Float64(tris[i].vertices[2, 2])
+                node_coords[v2, 3] = Float64(tris[i].vertices[3, 2])
+                filled[v2] = true
+            end
+            if !filled[v3]
+                node_coords[v3, 1] = Float64(tris[i].vertices[1, 3])
+                node_coords[v3, 2] = Float64(tris[i].vertices[2, 3])
+                node_coords[v3, 3] = Float64(tris[i].vertices[3, 3])
+                filled[v3] = true
+            end
+        end
+
+        for v in (v1, v2, v3)
+            push!(get!(vert_to_tris, v, Int64[]), Int64(i))
+        end
+
+        for (a, b) in ((v1, v2), (v2, v3), (v3, v1))
+            e = a < b ? (a, b) : (b, a)
+            push!(get!(edge_to_tris, e, Int64[]), Int64(i))
+        end
+    end
+
+    edge_neighbors_indptr = Vector{Int64}(undef, n + 1)
+    edge_neighbors_indptr[1] = 1
+    edge_neighbors_indices = Int64[]
+
+    vertex_neighbors_indptr = Vector{Int64}(undef, n + 1)
+    vertex_neighbors_indptr[1] = 1
+    vertex_neighbors_indices = Int64[]
+
+    @inbounds for i in 1:n
+        v1 = tri_vertices[i, 1]
+        v2 = tri_vertices[i, 2]
+        v3 = tri_vertices[i, 3]
+
+        # Edge-sharing neighbors
+        neigh_edge = Int64[]
+        seen_edge = Set{Int64}()
+        for (a, b) in ((v1, v2), (v2, v3), (v3, v1))
+            e = a < b ? (a, b) : (b, a)
+            for t in edge_to_tris[e]
+                t == i && continue
+                if !(t in seen_edge)
+                    push!(neigh_edge, t)
+                    push!(seen_edge, t)
+                end
+            end
+        end
+        sort!(neigh_edge)
+        append!(edge_neighbors_indices, neigh_edge)
+        edge_neighbors_indptr[i + 1] = length(edge_neighbors_indices) + 1
+
+        # Vertex-sharing neighbors
+        neigh_vert = Int64[]
+        seen_vert = Set{Int64}()
+        for v in (v1, v2, v3)
+            for t in vert_to_tris[v]
+                t == i && continue
+                if !(t in seen_vert)
+                    push!(neigh_vert, t)
+                    push!(seen_vert, t)
+                end
+            end
+        end
+        sort!(neigh_vert)
+        append!(vertex_neighbors_indices, neigh_vert)
+        vertex_neighbors_indptr[i + 1] = length(vertex_neighbors_indices) + 1
+    end
+
+    return (
+        tri_vertices = tri_vertices,
+        node_coords = node_coords,
+        edge_neighbors_indptr = edge_neighbors_indptr,
+        edge_neighbors_indices = edge_neighbors_indices,
+        vertex_neighbors_indptr = vertex_neighbors_indptr,
+        vertex_neighbors_indices = vertex_neighbors_indices,
+        tri_index_base = Int64(1),
+        node_index_base = Int64(1),
+    )
+end
+
+"""
+    triangleConnectivity(geosInfo)
+
+Flatten `geosInfo` the same way as field/current extraction and compute connectivity.
+Requires the flattened geometry to be triangles.
+"""
+function triangleConnectivity(geosInfo)
+    geos_flat = _flatten_geos_basics(geosInfo)
+    if !(geos_flat isa AbstractVector{<:TriangleInfo})
+        # Fall back to filtering (keeps ordering) but requires all entries be triangles.
+        tris = TriangleInfo[]
+        for g in geos_flat
+            g isa TriangleInfo || error("triangleConnectivity requires TriangleInfo geometries")
+            push!(tris, g)
+        end
+        return triangleConnectivity(tris)
+    end
+    return triangleConnectivity(geos_flat)
 end
 
 FieldData{FT, CT}(npoints::Int, positions::Vector{SVec3D{FT}}) where {FT, CT} = 
@@ -82,12 +236,13 @@ end
 
 
 """
-    mergeFieldData!(target::FieldData, source::FieldData)
+    mergeFieldData!(target::FieldData, source_raw::NamedTuple)
 
 Merge fields from `source` into `target`. Requires matching number of points.
 Note: Does not rigorously check if positions are identical, assumes consistent mesh usage.
 """
-function mergeFieldData!(target::FieldData, source::FieldData)
+function mergeFieldData!(target::FieldData, source_raw::NamedTuple)
+    source = toFieldData(source_raw)
     if target.npoints != source.npoints
         error("Cannot merge FieldData: different number of points (target: $(target.npoints), source: $(source.npoints))")
     end
@@ -96,11 +251,11 @@ function mergeFieldData!(target::FieldData, source::FieldData)
 end
 
 """
-    saveFieldData(filename::String, data::FieldData)
+    saveFieldData(filename::String, data)
 
 Save field data to CSV or NPZ.
 """
-function saveFieldData(filename::String, data::FieldData)
+function saveFieldData(filename::String, data; connectivity_geosInfo = nothing)
     if endswith(filename, ".npz")
         n = data.npoints
         dict_to_save = Dict{String, Any}()
@@ -123,6 +278,22 @@ function saveFieldData(filename::String, data::FieldData)
                  f_arr[i, 3] = val[i][3]
              end
              dict_to_save[string(key)] = f_arr
+        end
+
+        # Optional: Save mesh connectivity in the SAME ordering as `data`.
+        if connectivity_geosInfo !== nothing
+            conn = triangleConnectivity(connectivity_geosInfo)
+            size(conn.tri_vertices, 1) == n || error(
+                "Connectivity size mismatch: got $(size(conn.tri_vertices, 1)) triangles but FieldData has $n points."
+            )
+            dict_to_save["tri_vertices"] = conn.tri_vertices
+            dict_to_save["node_coords"] = conn.node_coords
+            dict_to_save["tri_neighbors_edge_indptr"] = conn.edge_neighbors_indptr
+            dict_to_save["tri_neighbors_edge_indices"] = conn.edge_neighbors_indices
+            dict_to_save["tri_neighbors_vertex_indptr"] = conn.vertex_neighbors_indptr
+            dict_to_save["tri_neighbors_vertex_indices"] = conn.vertex_neighbors_indices
+            dict_to_save["tri_index_base"] = conn.tri_index_base
+            dict_to_save["node_index_base"] = conn.node_index_base
         end
         
         npzwrite(filename, dict_to_save)

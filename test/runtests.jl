@@ -19,12 +19,20 @@ using Test
         include("sources.jl")
     end
 
+    @testset "Ports" begin
+        include("ports.jl")
+    end
+
     @testset "Triangle IBC Extensions" begin
         include("triangles_ibc.jl")
     end
 
     @testset "Consolidated Extraction" begin
         include("consolidated_extraction.jl")
+    end
+
+    @testset "Triangle Connectivity" begin
+        include("triangle_connectivity.jl")
     end
     rm("results"; force = true, recursive = true)
 

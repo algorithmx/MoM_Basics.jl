@@ -45,10 +45,20 @@ export  Vec3D, SVec3D, MVec3D, random_rhat,
         ExcitingSource, AntennaType, ExcitingSources,
         calExcitationFields, saveExcitationFields, ExcitationFieldData,
         calIncidentFields, saveIncidentFields, saveFieldData, mergeFieldData!, FieldData,
+        triangleConnectivity,
         PlaneWave, sourceEfield, sourceHfield, sourceLocalEfield,
         MagneticDipole, update_phase!, add_phase!, update_orient!,
         sourceLocalFarEfield, sourceFarEfield, radiationIntegralL0, radiationIntensityU_m,
         radiationPower, radiationDirectionCoeff,
+        # 端口激励
+        DeltaGapPort, CurrentProbe, PortArray, find_edge_index,
+        excitationVectorEFIE, excitationVectorEFIE!, excitationVectorMFIE, excitationVectorCFIE,
+        getExcitationVector, addExcitationVector!,
+        getPortVoltage, getPortCurrent, assembleExcitationVector!,
+        # S参数计算
+        computeInputImpedance, computeS11, computeSParameters, getPortImpedance,
+        # 积分方程类型
+        AbstractIntegralEquation, EFIE, MFIE, CFIE,
         AbstractAntennaArray, taylorwin, AntennaArray, distance,
         antennaArray, setdiffArray!,
         timer, memory, @clock, show_memory_time
@@ -78,5 +88,6 @@ include("MeshAndBFs.jl")
 
 ## 源信息
 include("Sources/Source.jl")
+include("Sources/Port.jl")
 
 end
