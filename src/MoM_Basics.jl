@@ -57,6 +57,9 @@ export  Vec3D, SVec3D, MVec3D, random_rhat,
         getPortVoltage, getPortCurrent, assembleExcitationVector!,
         # S参数计算
         computeInputImpedance, computeS11, computeSParameters, getPortImpedance,
+        # 计算质量检查
+        check_impedance_symmetry, check_sparameter_reciprocity,
+        check_passivity, check_sparameter_quality,
         # 积分方程类型
         AbstractIntegralEquation, EFIE, MFIE, CFIE,
         AbstractAntennaArray, taylorwin, AntennaArray, distance,
@@ -89,5 +92,8 @@ include("MeshAndBFs.jl")
 ## 源信息
 include("Sources/Source.jl")
 include("Sources/Port.jl")
+
+## 计算质量检查
+include("SanityChecks.jl")
 
 end

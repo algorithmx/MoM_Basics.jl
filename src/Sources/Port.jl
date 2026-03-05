@@ -1316,7 +1316,8 @@ function computeSParameters(
     ports::PortArray{FT, IT, PT},
     Z_matrix::Matrix{Complex{FT}},
     V_excitation::Vector{Complex{FT}};
-    Z0::FT = FT(50.0)
+    Z0::FT          = FT(50.0),
+    check_quality::Bool = true
 ) where {FT<:Real, IT<:Integer, PT<:ExcitingSource}
 
     nbf = size(Z_matrix, 1)
@@ -1508,6 +1509,8 @@ function computeSParameters(
         S_matrix = fill(Complex{FT}(NaN, NaN), num_ports, num_ports)
     end
 
+    # 质量检查：互易性 + 无源性 (only when single-port path used computeS11 which has no matrix to check)
+    check_quality && !any(isnan, S_matrix) && check_sparameter_quality(S_matrix)
     return S_matrix
 end
 
