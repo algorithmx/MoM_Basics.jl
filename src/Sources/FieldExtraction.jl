@@ -38,7 +38,7 @@ function triangleConnectivity(tris::AbstractVector{<:TriangleInfo})
         v1 = Int64(vids[1]); v2 = Int64(vids[2]); v3 = Int64(vids[3])
         max_vid = max(max_vid, v1, v2, v3)
     end
-    node_coords = Matrix{Float64}(undef, max_vid, 3)
+    node_coords = zeros(Float64, max_vid, 3)  # Initialize with zeros to avoid NaN in unused nodes
     filled = falses(max_vid)
 
     edge_to_tris = Dict{Tuple{Int64, Int64}, Vector{Int64}}()
