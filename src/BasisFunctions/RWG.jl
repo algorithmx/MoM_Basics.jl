@@ -142,11 +142,12 @@ function rwgbfConstructerTrianglesInfoModifiers!(trianglemeshData::TriangleMesh,
         #最后一个边是半基函数时进行处理
         edgeii == 3*trinum && begin
             # 挑出第rwg2[edgeii, 1]个基函数信息
-            rwgInfo         =   rwgsInfo[rwgnum]
+            bfID            =   rwg2[edgeii, 1]
+            rwgInfo         =   rwgsInfo[bfID]
             rwgInfo.isbd    =   true
-            rwgInfo.bfID   =   bfID
-            rwgInfo.inGeo   =   tri2[edgeii, 1]
-            rwgInfo.inGeoID =   tri2[edgeii, 2]
+            rwgInfo.bfID    =   bfID
+            rwgInfo.inGeo[1]   = tri2[edgeii, 1]
+            rwgInfo.inGeoID[1] = tri2[edgeii, 2]
             edgenode        =   trianglemeshData.node[:,edge2opp1[edgeii,1:2]]
             rwgInfo.edgel   =   norm(edgenode[:, 1] - edgenode[:, 2])
             rwgInfo.center[:]   =   mean(edgenode, dims = 2)
@@ -287,7 +288,7 @@ end #function
 
 根据网格信息 `trianglemeshData` 生成三角形信息 `trianglesInfo` 、RWG基函数信息 `rwgsInfo`。
 """
-function getTriangleInfo(trianglemeshData::TriangleMesh{IT, FT}) where{IT, FT}
+function getTriangleInfo(trianglemeshData::TriangleMesh{IT, FT}; keep_half_rwg::Bool = false) where{IT, FT}
     # 分配三角形信息类型数组
     trianglesInfo       =   [TriangleInfo{IT, FT}()  for _ in 1:trianglemeshData.trinum ]
     # 写入对应的三角形id和点坐标数据
@@ -295,6 +296,8 @@ function getTriangleInfo(trianglemeshData::TriangleMesh{IT, FT}) where{IT, FT}
     # 写入三角形边长、边外法向量、面法向量、面积
     setTriParam!.(trianglesInfo)
     # 计算基函数信息并修改三角形信息中基函数相关项
-    rwgsInfo    =   rwgbfnohalfConstructerTrianglesInfoModifiers!(trianglemeshData, trianglesInfo)
+    rwgsInfo    =   keep_half_rwg ?
+                    rwgbfConstructerTrianglesInfoModifiers!(trianglemeshData, trianglesInfo) :
+                    rwgbfnohalfConstructerTrianglesInfoModifiers!(trianglemeshData, trianglesInfo)
     return trianglesInfo, rwgsInfo
 end

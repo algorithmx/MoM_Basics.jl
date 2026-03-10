@@ -74,7 +74,7 @@ getBFTfromCellT(::Type{T}) where {T<:VolumeCellType}    =   VSBFTypes.vbfType
 
 根据读取的网格数据生成网格元 + 基函数信息。
 """
-function getCellsBFs(meshData, vbfT)
+function getCellsBFs(meshData, vbfT; keep_half_rwg::Bool = false)
 
     ngeo    =   0
     nbf     =   0
@@ -85,8 +85,8 @@ function getCellsBFs(meshData, vbfT)
     meshData.trinum     > 0     && begin
         # 计算三角形信息
         print("Constructing RWG basis function...\t")
-        trianglemeshData    =   TriangleMesh(meshData.trinum, meshData.node, meshData.triangles)
-        trisInfo, stbfsInfo   =   getTriangleInfo(trianglemeshData)
+        trianglemeshData     =   TriangleMesh(meshData.trinum, meshData.node, meshData.triangles)
+        trisInfo, stbfsInfo  =   getTriangleInfo(trianglemeshData; keep_half_rwg = keep_half_rwg)
         # 三角形数量
         ntri    =   length(trisInfo)
         # rwg基函数数量
@@ -260,7 +260,7 @@ end
 
 通过文件名 `meshFileName` 直接读取网格元、创建基函数信息。
 """
-function getCellsBFsFromFileName(meshFileName; meshUnit = MeshUnit, sbfT = :RWG, vbfT = :nothing)
+function getCellsBFsFromFileName(meshFileName; meshUnit = MeshUnit, sbfT = :RWG, vbfT = :nothing, keep_half_rwg::Bool = false)
     
     # 更新仿真参数
     modiSimulationParams!(;meshfilename = meshFileName, meshunit = meshUnit)
@@ -270,7 +270,7 @@ function getCellsBFsFromFileName(meshFileName; meshUnit = MeshUnit, sbfT = :RWG,
     println("\tDone!")
 
     # 计算网格元、基函数
-    ngeo, nbf, geosInfo, bfsInfo = getCellsBFs(meshData, vbfT)
+    ngeo, nbf, geosInfo, bfsInfo = getCellsBFs(meshData, vbfT; keep_half_rwg = keep_half_rwg)
 
     ngeo, nbf, geosInfo, bfsInfo
 end
@@ -280,7 +280,7 @@ end
 
 通过网格信息 `meshData` 创建基函数信息。
 """
-function getBFsFromMeshData(meshData; sbfT = :nothing, vbfT = :nothing)
+function getBFsFromMeshData(meshData; sbfT = :nothing, vbfT = :nothing, keep_half_rwg::Bool = false)
     # 保存仿真参数 (重复，已丢弃)
     # saveSimulationParams(;sbfT = sbfT, vbfT = vbfT)
     # 更新面、体基函数类型
@@ -288,7 +288,7 @@ function getBFsFromMeshData(meshData; sbfT = :nothing, vbfT = :nothing)
 
     # 计算网格元、基函数
     @clock "构建网格元、基函数" begin
-        ngeo, nbf, geosInfo, bfsInfo = getCellsBFs(meshData, vbfT)
+        ngeo, nbf, geosInfo, bfsInfo = getCellsBFs(meshData, vbfT; keep_half_rwg = keep_half_rwg)
     end
     ## recordMem 打开才记录内存信息，对于大网格该过程非常耗时，选择性打开
     SimulationParams.recordMem && begin memory["网格元"]    =   Base.summarysize(geosInfo) end

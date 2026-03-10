@@ -7,6 +7,38 @@
 
 using StaticArrays
 
+function _build_planar_grid(xs::AbstractVector{<:Real}, ys::AbstractVector{<:Real}; keep_half_rwg::Bool = false)
+    nx = length(xs)
+    ny = length(ys)
+    nodes = zeros(Float64, 3, nx * ny)
+
+    for j in 1:ny
+        for i in 1:nx
+            idx = (j - 1) * nx + i
+            nodes[:, idx] = [Float64(xs[i]), Float64(ys[j]), 0.0]
+        end
+    end
+
+    triangles = Matrix{Int}(undef, 3, 2 * (nx - 1) * (ny - 1))
+    tri_idx = 1
+    for j in 1:(ny - 1)
+        for i in 1:(nx - 1)
+            n1 = (j - 1) * nx + i
+            n2 = n1 + 1
+            n3 = j * nx + i
+            n4 = n3 + 1
+
+            triangles[:, tri_idx] = [n1, n2, n4]
+            tri_idx += 1
+            triangles[:, tri_idx] = [n1, n4, n3]
+            tri_idx += 1
+        end
+    end
+
+    mesh = TriangleMesh(size(triangles, 2), nodes, triangles)
+    return MoM_Basics.getTriangleInfo(mesh; keep_half_rwg = keep_half_rwg)
+end
+
 @testset "DeltaGapPort" begin
 
     # 设置精度
@@ -433,6 +465,108 @@ end
 
 end
 
+
+@testset "RectangularWaveguidePort detection" begin
+
+    setPrecision!(Float64)
+
+    trianglesInfo, rwgsInfo = _build_planar_grid(0.0:1.0:4.0, 0.0:1.0:3.0)
+    port = RectangularWaveguidePort{Float64, Int}(
+        id = 1,
+        V = ComplexF64(1.0),
+        freq = 1.0e9,
+        center = MVector{3, Float64}(2.0, 1.5, 0.0),
+        normal = MVector{3, Float64}(0.0, 0.0, 1.0),
+        width = 2.0,
+        height = 1.0,
+        widthDirection = MVector{3, Float64}(1.0, 0.0, 0.0),
+        tol = 1e-8,
+        trianglesInfo = trianglesInfo,
+        rwgsInfo = rwgsInfo
+    )
+
+    @test port.portType == :rectangular_waveguide
+    @test port.mode == :TE10
+    @test port.vertexIDs == [7, 8, 9, 12, 13, 14]
+    @test length(port.triangleIDs) == 4
+    @test length(port.rwgIDs) == 6
+
+    sorted_weights = sort(abs.(port.edgeWeights))
+    expected_weights = [0.0, 0.0, sqrt(0.5), sqrt(0.5), sqrt(0.5), sqrt(0.5)]
+    @test all(isapprox.(sorted_weights, expected_weights; atol = 1e-10))
+end
+
+@testset "RectangularWaveguidePort boundary excitation" begin
+
+    setPrecision!(Float64)
+
+    trianglesInfo, rwgsInfo = _build_planar_grid([0.0, 1.0], [0.0, 1.0]; keep_half_rwg = true)
+    @test any(rwg -> rwg.isbd, rwgsInfo)
+
+    port = RectangularWaveguidePort{Float64, Int}(
+        id = 2,
+        V = ComplexF64(1.0),
+        freq = 1.0e9,
+        center = MVector{3, Float64}(0.5, 0.5, 0.0),
+        normal = MVector{3, Float64}(0.0, 0.0, 1.0),
+        width = 1.0,
+        height = 1.0,
+        widthDirection = MVector{3, Float64}(1.0, 0.0, 0.0),
+        tol = 1e-8,
+        trianglesInfo = trianglesInfo,
+        rwgsInfo = rwgsInfo
+    )
+
+    @test length(port.rwgIDs) == 4
+    @test all(==(0), port.triID_neg)
+    @test all(isapprox.(sort(abs.(port.edgeWeights)), [0.0, 0.0, 1.0, 1.0]; atol = 1e-10))
+
+    V_rect = excitationVectorEFIE(port, trianglesInfo, length(rwgsInfo))
+    @test all(isapprox.(sort(abs.(V_rect[port.rwgIDs])), [0.0, 0.0, 1.0, 1.0]; atol = 1e-10))
+end
+
+@testset "RectangularWaveguidePort PortArray integration" begin
+
+    setPrecision!(Float64)
+
+    trianglesInfo, rwgsInfo = _build_planar_grid([0.0, 1.0], [0.0, 1.0]; keep_half_rwg = true)
+    rect_port = RectangularWaveguidePort{Float64, Int}(
+        id = 3,
+        V = ComplexF64(2.0),
+        freq = 1.0e9,
+        center = MVector{3, Float64}(0.5, 0.5, 0.0),
+        normal = MVector{3, Float64}(0.0, 0.0, 1.0),
+        width = 1.0,
+        height = 1.0,
+        widthDirection = MVector{3, Float64}(1.0, 0.0, 0.0),
+        tol = 1e-8,
+        trianglesInfo = trianglesInfo,
+        rwgsInfo = rwgsInfo
+    )
+
+    spare_rwg = first(setdiff(collect(1:length(rwgsInfo)), rect_port.rwgIDs))
+    probe = CurrentProbe{Float64, Int}(
+        id = 4,
+        I = ComplexF64(0.5),
+        freq = 1.0e9,
+        rwgID = spare_rwg,
+        triID = rwgsInfo[spare_rwg].inGeo[1],
+        edgel = rwgsInfo[spare_rwg].edgel,
+        center = rwgsInfo[spare_rwg].center,
+        isActive = false
+    )
+
+    ports = ExcitingSource[rect_port, probe]
+    portArray = PortArray(ports)
+    V_total = getExcitationVector(portArray, trianglesInfo, length(rwgsInfo))
+    V_expected = excitationVectorEFIE(rect_port, trianglesInfo, length(rwgsInfo)) .+
+                 excitationVectorEFIE(probe, trianglesInfo, length(rwgsInfo))
+
+    @test portArray.numPorts == 2
+    @test length(portArray.activePorts) == 1
+    @test length(portArray.passivePorts) == 1
+    @test V_total ≈ V_expected
+end
 
 @testset "S-Parameter Calculation" begin
 
