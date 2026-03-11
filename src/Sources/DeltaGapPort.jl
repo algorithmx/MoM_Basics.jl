@@ -1,5 +1,5 @@
 """
-    DeltaGapPort{FT<:Real, IT<:Integer} <: ExcitingSource
+    DeltaGapPort{FT<:Real, IT<:Integer} <: PortType
 
 Delta-Gap (电压间隙) 激励端口类型。
 
@@ -86,7 +86,7 @@ port = DeltaGapPort(
 )
 ```
 """
-mutable struct DeltaGapPort{FT<:Real, IT<:Integer} <: ExcitingSource
+mutable struct DeltaGapPort{FT<:Real, IT<:Integer} <: PortType
     # 端口标识
     id          ::IT
     # 端口激励电压 (复数，包含幅值和相位)
@@ -494,119 +494,3 @@ end
 
 
 
-# ============================================================
-# S-参数计算函数
-# ============================================================
-
-"""
-    computeInputImpedance(port::DeltaGapPort, Z_matrix::Matrix{Complex{FT}}, V_excitation::Vector{Complex{FT}}; Z0::FT = 50.0)
-
-计算端口的输入阻抗。
-
-# 物理原理
-在MoM求解中，阻抗矩阵 Z 和激励向量 V 的关系为：
-Z × I = V
-
-其中 I 是电流系数向量。通过求解线性方程组得到 I 后，
-可以计算端口处的输入阻抗：
-
-Z_in = V_port / I_port
-
-其中 V_port 是端口激励电压，I_port 是端口电流。
-
-# 参数
-- `port`: Delta-Gap 端口
-- `Z_matrix`: MoM 阻抗矩阵 (nbf × nbf)
-- `V_excitation`: 激励向量
-- `Z0`: 参考阻抗 (默认 50 Ω)
-
-# 返回
-- 输入阻抗 Z_in (复数)
-"""
-function computeInputImpedance(
-    port::DeltaGapPort{FT, IT},
-    Z_matrix::Matrix{Complex{FT}},
-    V_excitation::Vector{Complex{FT}};
-    Z0::FT = FT(50.0)
-) where {FT<:Real, IT<:Integer}
-
-    nbf = size(Z_matrix, 1)
-
-    # 验证端口编号有效
-    if port.rwgID <= 0 || port.rwgID > nbf
-        error("Invalid port rwgID: $(port.rwgID), must be between 1 and $nbf")
-    end
-
-    # 求解电流向量: Z × I = V
-    # 使用 Julia 的内置线性代数求解器
-    I = Z_matrix \ V_excitation
-
-    # 获取端口处的电流（基函数系数）
-    I_port = I[port.rwgID]
-
-    # 避免除以零
-    if abs(I_port) < eps(FT)
-        error("Zero current at port $(port.id). Cannot compute input impedance.")
-    end
-
-    # 计算输入阻抗: Z_in = V_port / I_port
-    Z_in = port.V / I_port
-
-    return Z_in
-end
-
-
-
-"""
-    computeS11(port::DeltaGapPort, Z_matrix::Matrix{Complex{FT}}, V_excitation::Vector{Complex{FT}}; Z0::FT = 50.0)
-
-计算单端口的 S11 参数。
-
-# 物理公式
-S11 = (Z_in - Z0) / (Z_in + Z0)
-
-其中：
-- Z_in 是输入阻抗
-- Z0 是参考阻抗（默认 50 Ω）
-
-# 参数
-- `port`: Delta-Gap 端口
-- `Z_matrix`: MoM 阻抗矩阵
-- `V_excitation`: 激励向量
-- `Z0`: 参考阻抗
-
-# 返回
-- S11 复数值 (幅度和相位)
-"""
-function computeS11(
-    port::DeltaGapPort{FT, IT},
-    Z_matrix::Matrix{Complex{FT}},
-    V_excitation::Vector{Complex{FT}};
-    Z0::FT = FT(50.0)
-) where {FT<:Real, IT<:Integer}
-
-    # 计算输入阻抗
-    Z_in = computeInputImpedance(port, Z_matrix, V_excitation; Z0 = Z0)
-
-    # 计算 S11: (Z_in - Z0) / (Z_in + Z0)
-    S11 = (Z_in - Z0) / (Z_in + Z0)
-
-    return S11
-end
-
-
-"""
-    getPortImpedance(port::DeltaGapPort, Z_matrix::Matrix{Complex{FT}}, V_excitation::Vector{Complex{FT}})
-
-获取端口阻抗（输入阻抗的另一种说法）。
-
-这是 computeInputImpedance 的便捷别名。
-"""
-function getPortImpedance(
-    port::DeltaGapPort{FT, IT},
-    Z_matrix::Matrix{Complex{FT}},
-    V_excitation::Vector{Complex{FT}}
-) where {FT<:Real, IT<:Integer}
-
-    return computeInputImpedance(port, Z_matrix, V_excitation)
-end

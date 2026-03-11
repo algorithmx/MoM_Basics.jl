@@ -1,6 +1,6 @@
 
 """
-    CurrentProbe{FT<:Real, IT<:Integer} <: ExcitingSource
+    CurrentProbe{FT<:Real, IT<:Integer} <: PortType
 
 电流探针激励源类型。
 
@@ -21,7 +21,7 @@ V_m = ∫ J · f_m dS = I_0
 ```
 即激励向量在电流探针所在的基函数处为单位电流。
 """
-mutable struct CurrentProbe{FT<:Real, IT<:Integer} <: ExcitingSource
+mutable struct CurrentProbe{FT<:Real, IT<:Integer} <: PortType
     id          ::IT
     I           ::Complex{FT}    # 探针电流 (复数)
     freq        ::FT             # 工作频率
@@ -188,89 +188,3 @@ function excitationVectorCFIE(
 end
 
 
-
-# ============================================================
-# S-参数计算函数
-# ============================================================
-
-
-"""
-    computeInputImpedance(port::CurrentProbe, Z_matrix::Matrix{Complex{FT}}, V_excitation::Vector{Complex{FT}}; Z0::FT = 50.0)
-
-计算电流探针端口的输入阻抗。
-"""
-function computeInputImpedance(
-    port::CurrentProbe{FT, IT},
-    Z_matrix::Matrix{Complex{FT}},
-    V_excitation::Vector{Complex{FT}};
-    Z0::FT = FT(50.0)
-) where {FT<:Real, IT<:Integer}
-
-    nbf = size(Z_matrix, 1)
-
-    if port.rwgID <= 0 || port.rwgID > nbf
-        error("Invalid port rwgID: $(port.rwgID)")
-    end
-
-    # 求解电流系数向量: Z × I_coeff = V_exc
-    I_coeff = Z_matrix \ V_excitation
-
-    # 获取端口处的电流系数
-    I_port = I_coeff[port.rwgID]
-
-    # 检查数值稳定性
-    if abs(I_port) < eps(FT) * 100
-        @warn "Very small current coefficient at port $(port.id), impedance may be inaccurate"
-    end
-
-    # 电流探针的输入阻抗定义为 Z_in = V_port / I_probe
-    # 其中端口电压由求解后的电流分布与阻抗矩阵恢复。
-    V_port = zero(Complex{FT})
-    for k in 1:nbf
-        V_port += Z_matrix[port.rwgID, k] * I_coeff[k]
-    end
-    Z_in = V_port / port.I
-
-    return Z_in
-end
-
-
-
-# ============================================================
-# S-参数计算函数
-# ============================================================
-
-
-"""
-    computeS11(port::CurrentProbe, Z_matrix::Matrix{Complex{FT}}, V_excitation::Vector{Complex{FT}}; Z0::FT = 50.0)
-
-计算电流探针端口的 S11 参数。
-"""
-function computeS11(
-    port::CurrentProbe{FT, IT},
-    Z_matrix::Matrix{Complex{FT}},
-    V_excitation::Vector{Complex{FT}};
-    Z0::FT = FT(50.0)
-) where {FT<:Real, IT<:Integer}
-
-    Z_in = computeInputImpedance(port, Z_matrix, V_excitation; Z0 = Z0)
-    S11 = (Z_in - Z0) / (Z_in + Z0)
-
-    return S11
-end
-
-
-
-"""
-    getPortImpedance(port::CurrentProbe, Z_matrix::Matrix{Complex{FT}}, V_excitation::Vector{Complex{FT}})
-
-获取电流探针端口的阻抗。
-"""
-function getPortImpedance(
-    port::CurrentProbe{FT, IT},
-    Z_matrix::Matrix{Complex{FT}},
-    V_excitation::Vector{Complex{FT}}
-) where {FT<:Real, IT<:Integer}
-
-    return computeInputImpedance(port, Z_matrix, V_excitation)
-end

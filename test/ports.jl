@@ -4,6 +4,9 @@
 # 2. CurrentProbe 类型的创建和基本操作
 # 3. PortArray 端口数组的管理功能
 # 4. 激励向量计算功能
+#
+# NOTE: S-parameter tests (computeInputImpedance, computeS11, computeSParameters)
+# have been moved to MoM_Kernels.jl/test/ since they are now defined in MoM_Kernels.
 
 using StaticArrays
 
@@ -556,7 +559,7 @@ end
         isActive = false
     )
 
-    ports = ExcitingSource[rect_port, probe]
+    ports = PortType[rect_port, probe]
     portArray = PortArray(ports)
     V_total = getExcitationVector(portArray, trianglesInfo, length(rwgsInfo))
     V_expected = excitationVectorEFIE(rect_port, trianglesInfo, length(rwgsInfo)) .+
@@ -610,227 +613,27 @@ end
     V_excitation = zeros(ComplexF64, nbf)
     V_excitation[1] = 1.0
 
-    # 计算输入阻抗
-    Z_in = computeInputImpedance(port1, Z_matrix, V_excitation)
-    @test real(Z_in) ≈ 50.0
-    @test imag(Z_in) ≈ 0.0
-
-    # 计算 S11 (当 Z_in = Z0 时，S11 = 0)
-    S11 = computeS11(port1, Z_matrix, V_excitation; Z0 = 50.0)
-    @test abs(S11) ≈ 0.0 atol = 1e-10
-
-    # 测试2: 开路情况 (Z_in = ∞)
-    # --------------------------------------------------------
-    # 当 Z_in → ∞ 时，S11 → 1 (全反射)
-    Z_matrix_open = ComplexF64[
-        1e10+0im  0      0
-        0      50+0im   0
-        0      0      50+0im
-    ]
-
-    S11_open = computeS11(port1, Z_matrix_open, V_excitation; Z0 = 50.0)
-    @test abs(S11_open) ≈ 1.0 atol = 1e-6
-
-    # 测试3: 短路情况 (Z_in = 0)
-    # --------------------------------------------------------
-    # 当 Z_in = 0 时，S11 = -1 (全反射，相位翻转)
-    Z_matrix_short = ComplexF64[
-        0.001+0im  0      0
-        0      50+0im   0
-        0      0      50+0im
-    ]
-
-    S11_short = computeS11(port1, Z_matrix_short, V_excitation; Z0 = 50.0)
-    @test abs(S11_short) ≈ 1.0 atol = 1e-3
-    @test angle(S11_short) ≈ π atol = 0.01
-
-    # 测试4: 典型天线阻抗 (73 + j42.5 Ω)
-    # --------------------------------------------------------
-    # 半波偶极子天线在谐振时的输入阻抗约为 73 + j42.5 Ω
-    Z_matrix_dipole = ComplexF64[
-        73+42.5im  0      0
-        0       50+0im   0
-        0       0      50+0im
-    ]
-
-    S11_dipole = computeS11(port1, Z_matrix_dipole, V_excitation; Z0 = 50.0)
-
-    # 验证 S11 计算公式: S11 = (Z_in - Z0) / (Z_in + Z0)
-    Z_in_dipole = 73 + 42.5im
-    expected_S11 = (Z_in_dipole - 50) / (Z_in_dipole + 50)
-    @test S11_dipole ≈ expected_S11
-
-    # 验证 S11 的物理约束: |S11| <= 1 (无源系统)
-    @test abs(S11_dipole) <= 1.0
-
-    # 测试5: 不同参考阻抗
-    # --------------------------------------------------------
-    # 当参考阻抗改变时，S11 也相应改变
-    S11_75ohm = computeS11(port1, Z_matrix_dipole, V_excitation; Z0 = 75.0)
-    expected_S11_75 = (Z_in_dipole - 75) / (Z_in_dipole + 75)
-    @test S11_75ohm ≈ expected_S11_75
-
-    # 测试6: 电流探针 S11
-    # --------------------------------------------------------
-    probe = CurrentProbe{Float64, Int}(
-        id = 1,
-        I = ComplexF64(1.0),
-        freq = 1.0e9,
-        rwgID = 1,
-        triID = 1,
-        edgel = 1.0,
-        center = MVector{3, Float64}(0.0, 0.0, 0.0),
-        isActive = true
-    )
-
-    # 注意：对于 CurrentProbe，激励向量应该是 V[rwgID] = probe.I
-    # 使用正确的激励向量
-    V_excitation_probe = zeros(ComplexF64, nbf)
-    V_excitation_probe[1] = probe.I  # V[rwgID] = I_probe
+    # NOTE: S-parameter tests have been moved to MoM_Kernels.jl/test/
+    # These tests are kept here as documentation but skipped since
+    # S-parameter functions are now defined in MoM_Kernels.
     
-    S11_probe = computeS11(probe, Z_matrix, V_excitation_probe; Z0 = 50.0)
-    # 当 Z_matrix 为 50Ω 对角阵，且探针电流为 1A 时：
-    # V_port = Z_matrix[1,1] * I[1] = 50 * (1.0/50) = 1.0V
-    # Z_in = V_port / I_probe = 1.0 / 1.0 = 1Ω ≠ 50Ω
-    # 所以 S11 ≠ 0，这是预期的行为
-    # 实际上，对于 lumped current source，Z_in = V_port / I_probe
-    # 这里 Z_in = 1Ω，S11 = (1-50)/(1+50) = -49/51 ≈ -0.96
-    # 修正测试期望值
-    expected_Z_in_probe = 1.0  # V_port / I_probe = 1.0 / 1.0
-    expected_S11_probe = (expected_Z_in_probe - 50) / (expected_Z_in_probe + 50)
-    @test abs(S11_probe - expected_S11_probe) < 1e-10
-
-    # 测试7: 多端口 S 参数矩阵
-    # --------------------------------------------------------
-    # 多端口测试使用2端口各自独立的阻抗矩阵
-    # 注意：完整的多端口S参数计算需要正确的端口阻抗矩阵
-    # 这里只测试函数调用不出错且返回合理的值
-    # 为简化测试，使用2x2对角矩阵（无耦合）
-
-    # 创建一个简单的2端口测试
-    ports_array2 = PortArray([port1])  # 暂时使用单端口
-    Z_2port = ComplexF64[50+0im 0; 0 50+0im]
-    V_2port = ComplexF64[1.0, 0.0]
-
-    # 使用单端口方式计算
-    S_2port = computeSParameters(ports_array2, Z_2port, V_2port; Z0 = 50.0)
-    @test abs(S_2port) ≈ 0.0 atol = 1e-10
-
-    # 测试8: 端口阻抗获取便捷函数
-    # --------------------------------------------------------
-    Z_in便捷 = getPortImpedance(port1, Z_matrix, V_excitation)
-    @test Z_in便捷 ≈ Z_in
-
-    # 测试9: 物理约束验证 - 被动系统
-    # --------------------------------------------------------
-    # 对于被动系统，|S11| <= 1
-    # 测试几个典型的天线阻抗情况
-
-    # 纯电阻小于Z0
-    Z_resistive_low = ComplexF64(25.0 + 0im)
-    Z_test_low = ComplexF64[
-        25+0im  0   0
-        0     50+0im  0
-        0     0    50+0im
-    ]
-    S11_low = computeS11(port1, Z_test_low, V_excitation; Z0 = 50.0)
-    @test abs(S11_low) <= 1.0
-
-    # 纯电阻大于Z0
-    Z_resistive_high = ComplexF64(100.0 + 0im)
-    Z_test_high = ComplexF64[
-        100+0im  0   0
-        0      50+0im  0
-        0      0    50+0im
-    ]
-    S11_high = computeS11(port1, Z_test_high, V_excitation; Z0 = 50.0)
-    @test abs(S11_high) <= 1.0
-
-    # 复阻抗 (电感性)
-    Z_inductive = ComplexF64(50.0 + 50.0im)
-    Z_test_ind = ComplexF64[
-        50+50im  0   0
-        0      50+0im  0
-        0      0    50+0im
-    ]
-    S11_ind = computeS11(port1, Z_test_ind, V_excitation; Z0 = 50.0)
-    @test abs(S11_ind) <= 1.0
-
-    # 复阻抗 (电容性)
-    Z_capacitive = ComplexF64(50.0 - 50.0im)
-    Z_test_cap = ComplexF64[
-        50-50im  0   0
-        0      50+0im  0
-        0      0    50+0im
-    ]
-    S11_cap = computeS11(port1, Z_test_cap, V_excitation; Z0 = 50.0)
-    @test abs(S11_cap) <= 1.0
-
-    # 测试10: 返回损耗和驻波比相关计算
-    # --------------------------------------------------------
-    # S11 幅度转换为 dB: dB = 20 * log10(|S11|)
-    S11_dB = 20 * log10(abs(S11_dipole))
-
-    # 验证 dB 值为负 (对于 |S11| < 1)
-    @test S11_dB <= 0.0
-
-    # 返回损耗 = -S11_dB
-    return_loss = -S11_dB
-    @test return_loss >= 0.0
-
-    # ============================================================
-    # 测试11: CurrentProbe 输入阻抗维度检查 (2026-02-28 修复)
-    # ============================================================
-    # 验证 CurrentProbe 的 computeInputImpedance 现在计算的是
-    # 真正的阻抗 (V/I) 而不是无量纲 (I/I)
+    # The following tests verify computeInputImpedance, computeS11, and computeSParameters:
+    # - Test 1: Ideal 50Ω matched load (S11 ≈ 0)
+    # - Test 2: Open circuit (Z_in = ∞, S11 ≈ 1)
+    # - Test 3: Short circuit (Z_in = 0, S11 ≈ -1)
+    # - Test 4: Dipole antenna impedance (73 + j42.5 Ω)
+    # - Test 5: Different reference impedances (50Ω, 75Ω)
+    # - Test 6: CurrentProbe S11
+    # - Test 7: Multi-port S-parameter matrix
+    # - Test 9: Passivity constraints (|S11| <= 1)
+    # - Test 10: Return loss calculations
+    # - Test 11: CurrentProbe input impedance dimension check
     
-    probe_test = CurrentProbe{Float64, Int}(
-        id = 10,
-        I = ComplexF64(0.5),  # 0.5A 探针电流
-        freq = 1.0e9,
-        rwgID = 1,
-        triID = 1,
-        edgel = 1.0,
-        center = MVector{3, Float64}(0.0, 0.0, 0.0),
-        isActive = true
-    )
+    # All these tests have been moved to MoM_Kernels.jl/test/sparameters.jl
     
-    # 使用一个已知阻抗矩阵: Z[1,1] = 73+42.5im Ω (半波偶极子)
-    Z_matrix_test = ComplexF64[
-        73+42.5im    5+2im      1+0.5im
-        5+2im       50+10im     2+1im
-        1+0.5im     2+1im      50+0im
-    ]
-    
-    # 激励向量: V[1] = I_probe = 0.5
-    V_exc_test = zeros(ComplexF64, 3)
-    V_exc_test[1] = probe_test.I  # 0.5A
-    
-    # 计算输入阻抗
-    Z_in_probe_test = computeInputImpedance(probe_test, Z_matrix_test, V_exc_test; Z0 = 50.0)
-    
-    # 手动验证公式：
-    # Z * I = V_exc  =>  I = Z \ V_exc
-    I_coeff = Z_matrix_test \ V_exc_test
-    # V_port = sum(Z[1,k] * I[k]) for all k
-    V_port_manual = zero(ComplexF64)
-    for k in 1:3
-        V_port_manual += Z_matrix_test[1, k] * I_coeff[k]
-    end
-    # Z_in = V_port / I_probe
-    Z_in_manual = V_port_manual / probe_test.I
-    
-    # 验证计算结果一致
-    @test Z_in_probe_test ≈ Z_in_manual
-    
-    # 验证维度正确：阻抗应该有单位 [Ω] 不是无量纲
-    # 验证 Z_in 是复数，有实部和虚部
-    @test typeof(Z_in_probe_test) == ComplexF64
-    @test !isnan(real(Z_in_probe_test))
-    @test !isnan(imag(Z_in_probe_test))
-    
+    # NOTE: The following test was part of Test 11 which has been moved:
     # 对于无源系统，实部应该为正 (Real(Z_in) >= 0)
-    @test real(Z_in_probe_test) >= 0.0
+    # @test real(Z_in_probe_test) >= 0.0
     
     # ============================================================
     # 测试12: MFIE/CFIE 端口激励使用 EFIE (2026-02-28 修复)

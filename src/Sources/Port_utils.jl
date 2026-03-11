@@ -168,6 +168,90 @@ function _collect_rectangular_port_edges(
     return rwg_ids, tri_id_pos, tri_id_neg, edge_lengths, edge_centers, edge_orients, edge_weights
 end
 
+"""
+    _collect_rectangular_port_edges(
+        vertex_ids::Vector{IT}, triangle_ids::Vector{IT},
+        center::MVec3D{FT}, widthDir::MVec3D{FT}, heightDir::MVec3D{FT},
+        normal::MVec3D{FT}, width::FT, height::FT,
+        distribution::AbstractExcitationDistribution{FT},
+        rwgsInfo::Vector{RWG{IT, FT}}, trianglesInfo::Vector{TriangleInfo{IT, FT}}
+    ) where {FT<:Real, IT<:Integer}
+
+Generalized port edge collection with configurable excitation distribution.
+
+This version accepts an `AbstractExcitationDistribution` to compute edge weights
+based on the specified mode pattern (TE/TM modes, uniform, or custom function).
+
+# Arguments
+- `vertex_ids` -- Mesh vertex IDs in the port region
+- `triangle_ids` -- Triangle IDs in the port region
+- `center` -- Port center position
+- `widthDir` -- Unit vector along port width
+- `heightDir` -- Unit vector along port height
+- `normal` -- Port normal vector
+- `width` -- Port width
+- `height` -- Port height
+- `distribution` -- Excitation distribution (e.g., `UniformDistribution()`, `SingleSideDistribution(:left)`)
+- `rwgsInfo` -- RWG basis function information
+- `trianglesInfo` -- Triangle mesh information
+
+# Returns
+- `(rwg_ids, tri_id_pos, tri_id_neg, edge_lengths, edge_centers, edge_orients, edge_weights)`
+"""
+function _collect_rectangular_port_edges(
+    vertex_ids::Vector{IT},
+    triangle_ids::Vector{IT},
+    center::MVec3D{FT},
+    widthDir::MVec3D{FT},
+    heightDir::MVec3D{FT},
+    normal::MVec3D{FT},
+    width::FT,
+    height::FT,
+    distribution::AbstractExcitationDistribution{FT},
+    rwgsInfo::Vector{RWG{IT, FT}},
+    trianglesInfo::Vector{TriangleInfo{IT, FT}}
+) where {FT<:Real, IT<:Integer}
+    vertex_set = Set(vertex_ids)
+    triangle_set = Set(triangle_ids)
+
+    # Pre-compute port parameters for voltage calculation
+    port_params = (
+        center = center,
+        widthDir = widthDir,
+        heightDir = heightDir,
+        normal = normal,
+        width = width,
+        height = height
+    )
+
+    rwg_ids = IT[]
+    tri_id_pos = IT[]
+    tri_id_neg = IT[]
+    edge_lengths = FT[]
+    edge_centers = MVec3D{FT}[]
+    edge_orients = MVec3D{FT}[]
+    edge_weights = Complex{FT}[]
+
+    for rwg in rwgsInfo
+        tri_pos_selected = rwg.inGeo[1] != 0 && rwg.inGeo[1] in triangle_set
+        tri_neg_selected = rwg.inGeo[2] != 0 && rwg.inGeo[2] in triangle_set
+        (tri_pos_selected ⊻ tri_neg_selected) || continue
+
+        vid1, vid2, edge_center, edge_orient = _rwg_edge_geometry(rwg, trianglesInfo)
+        (vid1 in vertex_set && vid2 in vertex_set) || continue
+
+        push!(rwg_ids, rwg.bfID)
+        push!(tri_id_pos, rwg.inGeo[1])
+        push!(tri_id_neg, rwg.inGeo[2])
+        push!(edge_lengths, rwg.edgel)
+        push!(edge_centers, edge_center)
+        push!(edge_orients, edge_orient)
+        push!(edge_weights, compute_voltage(distribution, edge_center, port_params))
+    end
+
+    return rwg_ids, tri_id_pos, tri_id_neg, edge_lengths, edge_centers, edge_orients, edge_weights
+end
+
 
 """
     find_edge_index(

@@ -9,6 +9,13 @@ abstract type ExcitingSource end
 """
 abstract type AntennaType <:ExcitingSource end
 
+
+"""
+端口抽象类
+"""
+abstract type PortType <:ExcitingSource end
+
+
 """
 复合激励类
 """
