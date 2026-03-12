@@ -335,70 +335,11 @@ function sourceHfield(port::DeltaGapArrayPort{FT, IT, DT}, r::AbstractVector{FT}
     return zero(MVec3D{Complex{FT}})
 end
 
-"""
-    excitationVectorEFIE(port::DeltaGapArrayPort, trianglesInfo, nbf)
 
-Compute EFIE excitation vector by applying Delta-Gap voltages at port boundary edges.
-
-Applies excitation to all RWG basis functions on the port perimeter identified
-during `bind_to_mesh!`. Each boundary edge receives:
-
-```
-V[rwgID] += V_port × weight(edge) × edge_length / 2   (full RWG)
-V[rwgID] += V_port × weight(edge) × edge_length      (half RWG, boundary)
-```
-
-where `weight(edge)` is computed from `excitationDistribution` at the edge center.
-
-Requires the port to be bound to mesh via `bind_to_mesh!` first.
-"""
-function excitationVectorEFIE(
-    port::DeltaGapArrayPort{FT, IT, DT},
-    trianglesInfo::Vector{TriangleInfo{IT, FT}},
-    nbf::Integer
-) where {FT, IT, DT}
-    port.isBound || error("Port must be bound to mesh before computing excitation")
-    V = zeros(Complex{FT}, nbf)
-    excitationVectorEFIE!(V, port, trianglesInfo)
-    return V
-end
-
-function excitationVectorEFIE!(
-    V::Vector{Complex{FT}},
-    port::DeltaGapArrayPort{FT, IT, DT},
-    trianglesInfo::Vector{TriangleInfo{IT, FT}}
-) where {FT, IT, DT}
-    port.isBound || error("Port must be bound to mesh")
-    
-    if port.singleEdgeMode
-        _excitation_single_edge!(V, port)
-    else
-        _excitation_array!(V, port)
-    end
-    return V
-end
-
-function excitationVectorCFIE(
-    port::DeltaGapArrayPort{FT, IT, DT},
-    trianglesInfo::Vector{TriangleInfo{IT, FT}},
-    nbf::Integer;
-    alpha::FT = FT(0.5),
-    kwargs...
-) where {FT, IT, DT}
-    # For voltage sources, EFIE is the natural choice
-    excitationVectorEFIE(port, trianglesInfo, nbf)
-end
-
-function excitationVectorMFIE(
-    port::DeltaGapArrayPort{FT, IT, DT},
-    trianglesInfo::Vector{TriangleInfo{IT, FT}},
-    nbf::Integer;
-    strategy::Symbol = :convert
-) where {FT, IT, DT}
-    error("excitationVectorMFIE is not implemented for DeltaGapArrayPort. " *
-          "MFIE formulation with multi-edge voltage ports requires physical consideration. " *
-          "Use EFIE formulation or implement a conversion strategy if needed.")
-end
+# Note: excitationVectorEFIE, excitationVectorMFIE, excitationVectorCFIE
+# are now implemented in MoM_Kernels.jl/src/ZmatAndVvec/Ports/SurfacePortExcitation.jl
+# for consistency with the consumer-provider architecture where MoM_Kernels
+# provides all matrix/vector computation.
 
 
 # =============================================================================
@@ -601,44 +542,8 @@ function _estimate_dimensions_from_edges(centers, port_center, wdir, hdir)
     return 2 * max_u, 2 * max_v
 end
 
-"""
-    _excitation_array!(V, port::DeltaGapArrayPort)
-
-Apply Delta-Gap excitation to all boundary edges (array excitation mode).
-
-For each boundary edge identified during `bind_to_mesh!`, computes the excitation
-contribution using the Delta-Gap formula: V × weight × length_factor.
-"""
-function _excitation_array!(V, port)
-    for i in eachindex(port.rwgIDs)
-        rwgID = port.rwgIDs[i]
-        rwgID <= length(V) || continue
-        edge_voltage = port.V * port.edgeWeights[i]
-        factor = port.triID_neg[i] > 0 ? port.edgeLengths[i] / 2 : port.edgeLengths[i]
-        V[rwgID] += edge_voltage * factor
-    end
-end
-
-"""
-    _excitation_single_edge!(V, port::DeltaGapArrayPort)
-
-Apply Delta-Gap excitation to a single edge (like DeltaGapPort).
-
-Uses the `primaryRwgID` field to select which edge to excite, falling back
-to the first available edge if not found.
-"""
-function _excitation_single_edge!(V, port)
-    idx = findfirst(==(port.primaryRwgID), port.rwgIDs)
-    idx === nothing && !isempty(port.rwgIDs) && (idx = 1)
-    idx === nothing && return
-    
-    rwgID = port.rwgIDs[idx]
-    rwgID <= length(V) || return
-    
-    edge_voltage = port.V * port.edgeWeights[idx]
-    factor = port.triID_neg[idx] > 0 ? port.edgeLengths[idx] / 2 : port.edgeLengths[idx]
-    V[rwgID] += edge_voltage * factor
-end
+# Note: _excitation_array! and _excitation_single_edge! are now implemented in
+# MoM_Kernels.jl/src/ZmatAndVvec/Ports/SurfacePortExcitation.jl
 
 
 # =============================================================================

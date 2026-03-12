@@ -613,30 +613,11 @@ end
     V_excitation = zeros(ComplexF64, nbf)
     V_excitation[1] = 1.0
 
-    # NOTE: S-parameter tests have been moved to MoM_Kernels.jl/test/
-    # These tests are kept here as documentation but skipped since
-    # S-parameter functions are now defined in MoM_Kernels.
-    
-    # The following tests verify computeInputImpedance, computeS11, and computeSParameters:
-    # - Test 1: Ideal 50Ω matched load (S11 ≈ 0)
-    # - Test 2: Open circuit (Z_in = ∞, S11 ≈ 1)
-    # - Test 3: Short circuit (Z_in = 0, S11 ≈ -1)
-    # - Test 4: Dipole antenna impedance (73 + j42.5 Ω)
-    # - Test 5: Different reference impedances (50Ω, 75Ω)
-    # - Test 6: CurrentProbe S11
-    # - Test 7: Multi-port S-parameter matrix
-    # - Test 9: Passivity constraints (|S11| <= 1)
-    # - Test 10: Return loss calculations
-    # - Test 11: CurrentProbe input impedance dimension check
-    
-    # All these tests have been moved to MoM_Kernels.jl/test/sparameters.jl
-    
-    # NOTE: The following test was part of Test 11 which has been moved:
-    # 对于无源系统，实部应该为正 (Real(Z_in) >= 0)
-    # @test real(Z_in_probe_test) >= 0.0
-    
+    # NOTE: S-parameter tests (computeInputImpedance, computeS11, computeSParameters)
+    # are located in MoM_Kernels.jl/test/sparameters.jl
+
     # ============================================================
-    # 测试12: MFIE/CFIE 端口激励使用 EFIE (2026-02-28 修复)
+    # MFIE/CFIE 端口激励使用 EFIE (2026-02-28 修复)
     # ============================================================
     # 验证 MFIE 和 CFIE 公式现在使用 EFIE 激励向量
     # 而不是硬编码的 50Ω 假设
@@ -662,7 +643,6 @@ end
     nbf_formulation = 5
     
     # 测试主要目标：验证 MFIE/CFIE 使用电压端口时会发出警告
-    # 这确保了修复生效：不再使用 50Ω 假设，而是使用 EFIE 激励
     
     # MFIE 激励向量 - 应该发出警告
     V_mfie_test = zeros(ComplexF64, nbf_formulation)

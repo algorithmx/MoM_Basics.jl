@@ -114,7 +114,7 @@ end
 """
     RectangularWaveguidePort{FT, IT}(;
         id, V, freq, center, normal, width, height, widthDirection, tol,
-        excitationDistribution, trianglesInfo, rwgsInfo, isActive
+        excitationDistribution, mode, trianglesInfo, rwgsInfo, isActive
     )
 
 Construct a rectangular waveguide port with configurable excitation distribution.
@@ -134,6 +134,7 @@ with the generic implementation.
 - `widthDirection::MVec3D{FT}` -- Direction along width (default: auto-computed)
 - `tol::FT` -- Geometric tolerance (default: 1e-6)
 - `excitationDistribution` -- Voltage distribution pattern (default: `UniformDistribution()`)
+- `mode` -- **Deprecated**: Legacy mode parameter. Use `excitationDistribution` instead.
 - `trianglesInfo` -- Triangle mesh information (required)
 - `rwgsInfo` -- RWG basis function information (required)
 - `isActive::Bool` -- Whether port is active (default: true)
@@ -149,11 +150,20 @@ function RectangularWaveguidePort{FT, IT}(;
     widthDirection::MVec3D{FT} = zero(MVec3D{FT}),
     tol::FT = FT(1e-6),
     excitationDistribution::AbstractExcitationDistribution{FT} = UniformDistribution(),
+    mode::Union{Symbol, Nothing} = nothing,
     trianglesInfo::Vector{TriangleInfo{IT, FT}},
     rwgsInfo::Vector{RWG{IT, FT}},
     isActive::Bool = true
 ) where {FT<:Real, IT<:Integer}
-    
+
+    # Handle legacy mode parameter
+    actual_distribution = excitationDistribution
+    if mode !== nothing
+        @warn "The `mode` keyword argument is deprecated. Use `excitationDistribution=UniformDistribution()` instead."
+        mode == :TE10 || error("Only :TE10 mode is supported in legacy mode. Use `excitationDistribution` for other distributions.")
+        actual_distribution = UniformDistribution{FT}()
+    end
+
     # Step 1: Create a DeltaGapArrayPort with rectangular binding
     # This does all the heavy lifting: vertex collection, triangle identification,
     # boundary edge finding, and weight computation
@@ -164,27 +174,27 @@ function RectangularWaveguidePort{FT, IT}(;
         center = center,
         normal = normal,
         widthDir = widthDirection,
-        excitationDistribution = excitationDistribution,
+        excitationDistribution = actual_distribution,
         isActive = isActive
     )
-    
+
     # Step 2: Create rectangular predicate
     n̂, wdir, hdir = _compute_port_frame(normal, widthDirection)
     predicate = let c = center, w = wdir, h = hdir, hw = width / 2, hh = height / 2
         p -> abs((p - c) ⋅ w) <= hw && abs((p - c) ⋅ h) <= hh
     end
-    
+
     # Step 3: Bind to mesh using DeltaGapArrayPort's generic binding
     bind_to_mesh!(gap_port, predicate, trianglesInfo, rwgsInfo; estimateDimensions = false)
-    
+
     # Step 4: Mode impedance computation (Inf for non-modal distributions)
     mode_impedance = Complex{FT}(Inf)
-    
+
     # Step 5: Mode symbol for backward compatibility
-    mode_symbol = :custom
-    
+    mode_symbol = mode === nothing ? :custom : mode
+
     # Step 6: Create RectangularWaveguidePort with data from DeltaGapArrayPort
-    return RectangularWaveguidePort{FT, IT, typeof(excitationDistribution)}(
+    return RectangularWaveguidePort{FT, IT, typeof(actual_distribution)}(
         gap_port.id,
         gap_port.V,
         gap_port.freq,
@@ -212,35 +222,6 @@ function RectangularWaveguidePort{FT, IT}(;
     )
 end
 
-"""
-    RectangularWaveguidePort{FT, IT}(; mode::Symbol=:TE10, kwargs...)
-
-Legacy constructor with `mode::Symbol` for backward compatibility.
-
-**Deprecated**: Use `excitationDistribution` parameter instead.
-"""
-function RectangularWaveguidePort{FT, IT}(;
-    mode::Symbol = :TE10,
-    trianglesInfo::Vector{TriangleInfo{IT, FT}},
-    rwgsInfo::Vector{RWG{IT, FT}},
-    kwargs...
-) where {FT<:Real, IT<:Integer}
-    # Issue deprecation warning
-    @warn "The `mode` keyword argument is deprecated. Use `excitationDistribution=UniformDistribution()` instead."
-
-    mode == :TE10 || error("Only :TE10 mode is supported in legacy mode. Use `excitationDistribution` for other distributions.")
-
-    # Use uniform distribution as default for legacy mode
-    distribution = UniformDistribution()
-
-    RectangularWaveguidePort{FT, IT}(;
-        excitationDistribution = distribution,
-        trianglesInfo = trianglesInfo,
-        rwgsInfo = rwgsInfo,
-        kwargs...
-    )
-end
-
 RectangularWaveguidePort(args...; kwargs...) = RectangularWaveguidePort{Precision.FT, IntDtype}(args...; kwargs...)
 
 
@@ -257,52 +238,10 @@ function sourceHfield(port::RectangularWaveguidePort{FT, IT, DT}, r::AbstractVec
 end
 
 
-# =============================================================================
-# Excitation Vector Methods: Delegated to DeltaGapArrayPort
-# =============================================================================
-
-function excitationVectorEFIE(
-    port::RectangularWaveguidePort{FT, IT, DT},
-    trianglesInfo::Vector{TriangleInfo{IT, FT}},
-    nbf::Integer
-) where {FT<:Real, IT<:Integer, DT}
-    V = zeros(Complex{FT}, nbf)
-    excitationVectorEFIE!(V, port, trianglesInfo)
-    return V
-end
-
-function excitationVectorEFIE!(
-    V::Vector{Complex{FT}},
-    port::RectangularWaveguidePort{FT, IT, DT},
-    trianglesInfo::Vector{TriangleInfo{IT, FT}}
-) where {FT<:Real, IT<:Integer, DT}
-    # Delegate to DeltaGapArrayPort implementation
-    gap_port = _to_delta_gap_array_port(port)
-    excitationVectorEFIE!(V, gap_port, trianglesInfo)
-    return V
-end
-
-function excitationVectorCFIE(
-    port::RectangularWaveguidePort{FT, IT, DT},
-    trianglesInfo::Vector{TriangleInfo{IT, FT}},
-    nbf::Integer;
-    alpha::FT = FT(0.5),
-    mfie_strategy::Symbol = :convert
-) where {FT<:Real, IT<:Integer, DT}
-    # For voltage sources, EFIE is the natural choice
-    return excitationVectorEFIE(port, trianglesInfo, nbf)
-end
-
-function excitationVectorMFIE(
-    port::RectangularWaveguidePort{FT, IT, DT},
-    trianglesInfo::Vector{TriangleInfo{IT, FT}},
-    nbf::Integer;
-    strategy::Symbol = :convert
-) where {FT<:Real, IT<:Integer, DT}
-    # Delegate to DeltaGapArrayPort implementation
-    gap_port = _to_delta_gap_array_port(port)
-    return excitationVectorMFIE(gap_port, trianglesInfo, nbf; strategy = strategy)
-end
+# Note: excitationVectorEFIE, excitationVectorMFIE, excitationVectorCFIE
+# are now implemented in MoM_Kernels.jl/src/ZmatAndVvec/Ports/SurfacePortExcitation.jl
+# for consistency with the consumer-provider architecture where MoM_Kernels
+# provides all matrix/vector computation.
 
 
 # =============================================================================
