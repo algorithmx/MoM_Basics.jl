@@ -1,7 +1,7 @@
 """
     AbstractExcitationDistribution{FT<:Real}
 
-Abstract type hierarchy for waveguide port excitation distributions.
+Abstract type hierarchy for port excitation distributions.
 
 Subtypes define how voltage is distributed across port edges.
 """

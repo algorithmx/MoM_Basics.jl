@@ -51,7 +51,7 @@ export  Vec3D, SVec3D, MVec3D, random_rhat,
         sourceLocalFarEfield, sourceFarEfield, radiationIntegralL0, radiationIntensityU_m,
         radiationPower, radiationDirectionCoeff,
         # 端口激励
-        DeltaGapPort, RectangularWaveguidePort, DeltaGapArrayPort, 
+        DeltaGapPort, RectangularEdgePort, DeltaGapArrayPort, 
         CircularDeltaGapPort, EllipticalDeltaGapPort,
         CurrentProbe, PortArray, find_edge_index,
         bind_to_mesh!, unbind_mesh!,

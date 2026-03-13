@@ -23,6 +23,10 @@ using Test
         include("ports.jl")
     end
 
+    @testset "Port Masking" begin
+        include("port_masking.jl")
+    end
+
     @testset "Triangle IBC Extensions" begin
         include("triangles_ibc.jl")
     end

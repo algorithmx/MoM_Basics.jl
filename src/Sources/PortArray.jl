@@ -58,8 +58,8 @@ function PortArray(ports::Vector{PT}) where {PT<:PortType}
         # DeltaGapArrayPort is the generic base for array-based ports
         FT = port_type.parameters[1]
         IT = port_type.parameters[2]
-    elseif port_type <: RectangularWaveguidePort
-        # RectangularWaveguidePort is now implemented as a wrapper around DeltaGapArrayPort
+    elseif port_type <: RectangularEdgePort
+        # RectangularEdgePort is now implemented as a wrapper around DeltaGapArrayPort
         FT = port_type.parameters[1]
         IT = port_type.parameters[2]
     elseif port_type <: CurrentProbe

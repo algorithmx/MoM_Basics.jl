@@ -469,12 +469,12 @@ end
 end
 
 
-@testset "RectangularWaveguidePort detection" begin
+@testset "RectangularEdgePort detection" begin
 
     setPrecision!(Float64)
 
     trianglesInfo, rwgsInfo = _build_planar_grid(0.0:1.0:4.0, 0.0:1.0:3.0)
-    port = RectangularWaveguidePort{Float64, Int}(
+    port = RectangularEdgePort{Float64, Int}(
         id = 1,
         V = ComplexF64(1.0),
         freq = 1.0e9,
@@ -488,7 +488,7 @@ end
         rwgsInfo = rwgsInfo
     )
 
-    @test port.portType == :rectangular_waveguide
+    @test port.portType == :rectangular_edge
     @test port.mode == :TE10
     @test port.vertexIDs == [7, 8, 9, 12, 13, 14]
     @test length(port.triangleIDs) == 4
@@ -499,14 +499,14 @@ end
     @test all(isapprox.(sorted_weights, expected_weights; atol = 1e-10))
 end
 
-@testset "RectangularWaveguidePort boundary excitation" begin
+@testset "RectangularEdgePort boundary excitation" begin
 
     setPrecision!(Float64)
 
     trianglesInfo, rwgsInfo = _build_planar_grid([0.0, 1.0], [0.0, 1.0]; keep_half_rwg = true)
     @test any(rwg -> rwg.isbd, rwgsInfo)
 
-    port = RectangularWaveguidePort{Float64, Int}(
+    port = RectangularEdgePort{Float64, Int}(
         id = 2,
         V = ComplexF64(1.0),
         freq = 1.0e9,
@@ -528,12 +528,12 @@ end
     @test all(isapprox.(sort(abs.(V_rect[port.rwgIDs])), [0.0, 0.0, 1.0, 1.0]; atol = 1e-10))
 end
 
-@testset "RectangularWaveguidePort PortArray integration" begin
+@testset "RectangularEdgePort PortArray integration" begin
 
     setPrecision!(Float64)
 
     trianglesInfo, rwgsInfo = _build_planar_grid([0.0, 1.0], [0.0, 1.0]; keep_half_rwg = true)
-    rect_port = RectangularWaveguidePort{Float64, Int}(
+    rect_port = RectangularEdgePort{Float64, Int}(
         id = 3,
         V = ComplexF64(2.0),
         freq = 1.0e9,

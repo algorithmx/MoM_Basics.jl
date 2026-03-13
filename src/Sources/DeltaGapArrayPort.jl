@@ -6,7 +6,7 @@ Delta-Gap array port excitation for arbitrary cross-section geometries.
 This port type applies excitation at the **port boundary edges** (perimeter) using
 an array of Delta-Gap voltage sources. Each RWG basis function on the port 
 boundary receives a voltage excitation weighted by the configured distribution
-(e.g., uniform or single-side distribution). This generalizes waveguide port excitation to arbitrary
+(e.g., uniform or single-side distribution). This generalizes port excitation to arbitrary
 cross-section shapes while preserving the essential features of `DeltaGapPort`.
 
 # Excitation Mechanism
@@ -251,20 +251,39 @@ bind_to_mesh!(port, trianglesInfo, rwgsInfo) do p
     (p[1] - xc)^2 + (p[2] - yc)^2 <= radius^2
 end
 ```
+
+See also: [`find_port_boundary_edges`](@ref), [`_compute_edge_weights`](@ref)
 """
-function bind_to_mesh!(
-    port::DeltaGapArrayPort{FT, IT, DT},
+
+"""
+    find_port_boundary_edges(predicate, port_center, port_normal, trianglesInfo, rwgsInfo)
+
+Find boundary edges for a port defined by a predicate function.
+
+This is a low-level function that performs edge discovery without computing weights.
+Returns a named tuple with all edge geometry information.
+
+# Arguments
+- `predicate::Function` -- `(point::AbstractVector) -> Bool`, true if inside port
+- `port_center::MVec3D` -- Port center for tolerance computation
+- `port_normal::MVec3D` -- Port normal for tolerance computation
+- `trianglesInfo::Vector{TriangleInfo}` -- Mesh triangles
+- `rwgsInfo::Vector{RWG}` -- RWG basis functions
+
+# Returns
+Named tuple `(rwgIDs, triPos, triNeg, lengths, centers, orients)` with boundary edge data.
+"""
+function find_port_boundary_edges(
     predicate::Function,
+    port_center::MVec3D{FT},
+    port_normal::MVec3D{FT},
     trianglesInfo::Vector{TriangleInfo{IT, FT}},
-    rwgsInfo::Vector{RWG{IT, FT}};
-    estimateDimensions::Bool = true
-) where {FT<:Real, IT<:Integer, DT}
-    
-    port.isBound && @warn "Port $(port.id) is already bound. Rebinding..."
+    rwgsInfo::Vector{RWG{IT, FT}}
+) where {FT<:Real, IT<:Integer}
     
     # 1. Collect vertices inside port region
     tol = _compute_tolerance(trianglesInfo)
-    vertex_ids = _collect_vertices_by_predicate(predicate, port.center, port.normal, 
+    vertex_ids = _collect_vertices_by_predicate(predicate, port_center, port_normal, 
                                                   tol, trianglesInfo)
     isempty(vertex_ids) && error("No mesh vertices found inside port region")
     
@@ -276,7 +295,49 @@ function bind_to_mesh!(
     boundary_data = _identify_boundary_edges(vertex_ids, triangle_ids, rwgsInfo, trianglesInfo)
     isempty(boundary_data) && error("No boundary edges found")
     
-    # 4. Compute voltage weights
+    return boundary_data
+end
+
+
+"""
+    bind_to_mesh!(
+        port::DeltaGapArrayPort, predicate, trianglesInfo, rwgsInfo; 
+        estimateDimensions=true
+    )
+
+Bind an unbound port to a mesh, identifying boundary edges for Delta-Gap excitation.
+
+This convenience function combines edge discovery and weight computation for generic
+ports. For rectangular ports with known dimensions, consider using the lower-level
+`find_port_boundary_edges` + `_compute_edge_weights(centers, port, width, height)` directly.
+
+See also: [`find_port_boundary_edges`](@ref), [`_compute_edge_weights`](@ref)
+"""
+function bind_to_mesh!(
+    port::DeltaGapArrayPort{FT, IT, DT},
+    predicate::Function,
+    trianglesInfo::Vector{TriangleInfo{IT, FT}},
+    rwgsInfo::Vector{RWG{IT, FT}};
+    estimateDimensions::Bool = true
+) where {FT<:Real, IT<:Integer, DT}
+    
+    port.isBound && @warn "Port $(port.id) is already bound. Rebinding..."
+    
+    # 1. Collect vertices inside port region (needed for updating port fields)
+    tol = _compute_tolerance(trianglesInfo)
+    vertex_ids = _collect_vertices_by_predicate(predicate, port.center, port.normal, 
+                                                  tol, trianglesInfo)
+    isempty(vertex_ids) && error("No mesh vertices found inside port region")
+    
+    # 2. Collect triangles (all vertices inside)
+    triangle_ids = _collect_triangles_by_vertices(vertex_ids, trianglesInfo)
+    isempty(triangle_ids) && error("No triangles found for port region")
+    
+    # 3. Find boundary edges (geometry only)
+    boundary_data = _identify_boundary_edges(vertex_ids, triangle_ids, rwgsInfo, trianglesInfo)
+    isempty(boundary_data) && error("No boundary edges found")
+    
+    # 4. Compute voltage weights (estimate dimensions from actual edges)
     edge_weights = _compute_edge_weights(boundary_data.centers, port)
     
     # 5. Update port fields
@@ -395,6 +456,9 @@ end
     set_excitation_distribution!(port, distribution)
 
 Change the excitation distribution. Recomputes edge weights if bound.
+
+For `DeltaGapArrayPort`, dimensions are estimated from edge positions. 
+For `RectangularEdgePort`, use the specialized method that uses stored dimensions.
 """
 function set_excitation_distribution!(
     port::DeltaGapArrayPort{FT, IT, DT},
@@ -403,10 +467,11 @@ function set_excitation_distribution!(
     port.excitationDistribution = distribution
     
     if port.isBound
+        # Use estimated dimensions (no explicit dimensions stored in DeltaGapArrayPort)
         port.edgeWeights = _compute_edge_weights(port.edgeCenters, port)
     end
     
-    # Update mode impedance
+    # Update mode impedance using estimated dimensions
     width, height = port.isBound ? 
         _estimate_dimensions_from_edges(port.edgeCenters, port.center, port.widthDir, port.heightDir) :
         (zero(FT), zero(FT))
@@ -519,16 +584,51 @@ function _identify_boundary_edges(vertex_ids, triangle_ids, rwgsInfo, trianglesI
             lengths=lengths, centers=centers, orients=orients)
 end
 
-function _compute_edge_weights(centers::Vector{MVec3D{FT}}, port::DeltaGapArrayPort) where {FT}
+"""
+    _compute_edge_weights(centers, port::DeltaGapArrayPort, width, height)
+
+Compute edge weights using EXPLICIT dimensions (for rectangular ports with known geometry).
+
+# Arguments
+- `centers::Vector{MVec3D}` -- Edge center positions
+- `port::DeltaGapArrayPort` -- Port (for distribution, coordinate frame)
+- `width::Real` -- Known port width
+- `height::Real` -- Known port height
+
+This is the PREFERRED method for `RectangularEdgePort` which has exact dimensions.
+"""
+function _compute_edge_weights(
+    centers::Vector{MVec3D{FT}}, 
+    port::DeltaGapArrayPort{FT, IT, DT},
+    width::FT,
+    height::FT
+) where {FT, IT, DT}
     port_params = (
         center = port.center,
         widthDir = port.widthDir,
         heightDir = port.heightDir,
         normal = port.normal,
-        width = FT(0),  # Will be estimated from edge positions if needed
-        height = FT(0)
+        width = width,
+        height = height
     )
     return [compute_voltage(port.excitationDistribution, c, port_params) for c in centers]
+end
+
+"""
+    _compute_edge_weights(centers, port::DeltaGapArrayPort)
+
+Compute edge weights by ESTIMATING dimensions from edge positions (for arbitrary shapes).
+
+This method estimates width/height from the bounding box of edge centers, which may
+be inaccurate. Use `_compute_edge_weights(centers, port, width, height)` when dimensions
+are known (e.g., for rectangular ports).
+"""
+function _compute_edge_weights(centers::Vector{MVec3D{FT}}, port::DeltaGapArrayPort) where {FT}
+    # Estimate dimensions from actual edge positions
+    width, height = _estimate_dimensions_from_edges(centers, port.center, port.widthDir, port.heightDir)
+    
+    # Fall back to explicit dimension method
+    return _compute_edge_weights(centers, port, width, height)
 end
 
 function _estimate_dimensions_from_edges(centers, port_center, wdir, hdir)
