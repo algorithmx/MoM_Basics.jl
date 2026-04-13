@@ -167,6 +167,8 @@ function getNodeElems(::Val{:NAS}, pathname::ST; FT::Type{T}=Precision.FT, meshU
         node .*= 1e-3
     elseif meshUnit == :cm
         node .*= 1e-2
+    elseif meshUnit == :um
+        node .*= 1e-6
     elseif meshUnit == :m
         nothing
     else
@@ -336,6 +338,8 @@ function getNodeElems(::Val{:DAT}, pathname::ST; FT::Type{T}=Precision.FT, meshU
         node .*= 1e-3
     elseif meshUnit == :cm
         node .*= 1e-2
+    elseif meshUnit == :um
+        node .*= 1e-6
     elseif meshUnit == :m
         nothing
     else
@@ -425,6 +429,8 @@ function getNodeElems(::Val{:VTK}, pathname::ST; FT::Type{T}=Precision.FT, meshU
         node .*= 1e-3
     elseif meshUnit == :cm
         node .*= 1e-2
+    elseif meshUnit == :um
+        node .*= 1e-6
     elseif meshUnit == :m
         nothing
     else

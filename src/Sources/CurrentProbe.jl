@@ -74,8 +74,5 @@ function sourceHfield(probe::CurrentProbe{FT, IT}, r::AbstractVector{FT}) where 
 end
 
 
-# Note: excitationVectorEFIE, excitationVectorMFIE, excitationVectorCFIE
-# are now implemented in MoM_Kernels.jl/src/ZmatAndVvec/Ports/SurfacePortExcitation.jl
-# for consistency with the consumer-provider architecture where MoM_Kernels
-# provides all matrix/vector computation.
+# Excitation vector functions are implemented in MoM_Kernels.jl (SurfacePortExcitation.jl)
 

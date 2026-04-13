@@ -269,3 +269,43 @@ const EDGEVmINTriVsID   =   SVec3D{Int}(2, 3, 1)
 三角形在构建时构成第i个边的两个点为三角形中的除了第i个点的两个点，以下为索引构成第i个边的第二个点（计算边向量时用于减去第二个点 掉）时采用的对应点
 """
 const EDGEVpINTriVsID   =   SVec3D{Int}(3, 1, 2)
+
+# =============================================================================
+# Green's Function Configuration (Added for Layered Media Support)
+# =============================================================================
+
+"""
+    GFParamsType
+
+Configuration parameters for Green's function selection.
+
+Fields:
+- `gf_type::Symbol`: Green's function type (:freespace, :groundplane, :layered)
+- `ground_plane_z::Float64`: Ground plane z-coordinate (for :groundplane)
+- `layer_stack_file::String`: Path to layer stack JSON file (for :layered)
+- `has_layer_stack::Bool`: Whether a layer stack is configured
+- `current_gf::Union{Nothing, AbstractGreenFunction}`: Currently active GF instance
+
+# Notes
+- Defaults to :freespace for backward compatibility
+- Set via `set_green_function_type!()` function
+- GF instance created by `create_green_function()` after frequency is set
+"""
+mutable struct GFParamsType
+    gf_type::Symbol
+    ground_plane_z::Float64
+    layer_stack_file::String
+    has_layer_stack::Bool
+    
+    function GFParamsType()
+        new(:freespace, Inf, "", false)
+    end
+end
+
+"""
+Global Green's function configuration instance.
+
+Note: The accessor functions (set_green_function_type!, get_green_function_type, 
+reset_green_function_config!) are defined in the GreenFunction module.
+"""
+const GFParams = GFParamsType()

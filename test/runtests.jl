@@ -38,6 +38,11 @@ using Test
     @testset "Triangle Connectivity" begin
         include("triangle_connectivity.jl")
     end
+
+    @testset "Green's Functions" begin
+        include("GreenFunction/runtests.jl")
+    end
+    
     rm("results"; force = true, recursive = true)
 
 end

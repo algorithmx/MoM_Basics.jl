@@ -143,7 +143,7 @@ end
 # =============================================================================
 
 """
-    DeltaGapArrayPort{FT, IT}(; kwargs...)
+    DeltaGapArrayPort{FT, IT}(; V=1, kwargs...)
 
 Create a DeltaGapArrayPort without binding to mesh.
 
@@ -152,13 +152,17 @@ it with a specific mesh and cross-section shape.
 
 # Arguments
 - `id::IT = 0` -- Port identifier
-- `V::Complex{FT} = 1.0` -- Excitation voltage
+- `V::Number = 1` -- Excitation voltage (Real or Complex). 
+  Automatically converted to Complex{FT}. Defaults to 1.0.
 - `freq::FT = 0` -- Operating frequency
 - `center::MVec3D{FT}` -- Port center position (required)
 - `normal::MVec3D{FT}` -- Port normal vector (required)
 - `widthDir::MVec3D{FT}` -- Width reference direction (optional, auto-computed)
 - `excitationDistribution` -- Voltage distribution pattern (default: UniformDistribution())
 - `isActive::Bool = true` -- Port status
+
+The voltage can be specified as real (e.g., `V=1.0`) or complex (e.g., `V=1.0+0.5im`).
+Real values are automatically converted to complex with zero imaginary part.
 
 # Example
 ```julia
@@ -177,7 +181,7 @@ end
 """
 function DeltaGapArrayPort{FT, IT}(;
     id::IT = zero(IT),
-    V::Complex{FT} = one(Complex{FT}),
+    V::Number = 1,  # Accept Real or Complex, default to 1
     freq::FT = zero(FT),
     center::MVec3D{FT},
     normal::MVec3D{FT},
@@ -186,6 +190,9 @@ function DeltaGapArrayPort{FT, IT}(;
     isActive::Bool = true
 ) where {FT<:Real, IT<:Integer}
     
+    # Convert V to Complex{FT} (handles both Real and Complex inputs)
+    V_complex = convert(Complex{FT}, complex(V))
+    
     # Compute orthonormal frame
     n̂, wdir, hdir = _compute_port_frame(normal, widthDir)
     
@@ -193,7 +200,7 @@ function DeltaGapArrayPort{FT, IT}(;
     mode_impedance = _compute_mode_impedance_generic(excitationDistribution, freq, FT(0), FT(0))
     
     return DeltaGapArrayPort{FT, IT, typeof(excitationDistribution)}(
-        id, V, freq, :delta_gap_array, excitationDistribution, mode_impedance,
+        id, V_complex, freq, :delta_gap_array, excitationDistribution, mode_impedance,
         center, n̂, wdir, hdir,
         false,  # isBound
         IT[], IT[], IT[], IT[], IT[],  # mesh arrays empty
@@ -302,7 +309,7 @@ end
 """
     bind_to_mesh!(
         port::DeltaGapArrayPort, predicate, trianglesInfo, rwgsInfo; 
-        estimateDimensions=true
+        estimateDimensions=true, forcePortPEC=true
     )
 
 Bind an unbound port to a mesh, identifying boundary edges for Delta-Gap excitation.
@@ -311,6 +318,13 @@ This convenience function combines edge discovery and weight computation for gen
 ports. For rectangular ports with known dimensions, consider using the lower-level
 `find_port_boundary_edges` + `_compute_edge_weights(centers, port, width, height)` directly.
 
+# Keyword Arguments
+- `estimateDimensions::Bool = true` -- Estimate width/height from edge bounding box for mode impedance
+- `forcePortPEC::Bool = true` -- Set surface impedance `Zs = 0` (PEC) on port triangles.
+  For metallic waveguide ports, the port surface should remain PEC even if the surrounding
+  structure has non-PEC materials. Set to `false` only if you explicitly want the port
+  to inherit the material properties of the underlying mesh.
+
 See also: [`find_port_boundary_edges`](@ref), [`_compute_edge_weights`](@ref)
 """
 function bind_to_mesh!(
@@ -318,7 +332,8 @@ function bind_to_mesh!(
     predicate::Function,
     trianglesInfo::Vector{TriangleInfo{IT, FT}},
     rwgsInfo::Vector{RWG{IT, FT}};
-    estimateDimensions::Bool = true
+    estimateDimensions::Bool = true,
+    forcePortPEC::Bool = true
 ) where {FT<:Real, IT<:Integer, DT}
     
     port.isBound && @warn "Port $(port.id) is already bound. Rebinding..."
@@ -333,14 +348,22 @@ function bind_to_mesh!(
     triangle_ids = _collect_triangles_by_vertices(vertex_ids, trianglesInfo)
     isempty(triangle_ids) && error("No triangles found for port region")
     
-    # 3. Find boundary edges (geometry only)
+    # 3. Enforce PEC on port surface triangles (for metallic waveguide ports)
+    # This ensures the port aperture remains PEC even if surrounding structure has IBC
+    if forcePortPEC
+        for tri_id in triangle_ids
+            trianglesInfo[tri_id].Zs = zero(Complex{FT})
+        end
+    end
+    
+    # 4. Find boundary edges (geometry only)
     boundary_data = _identify_boundary_edges(vertex_ids, triangle_ids, rwgsInfo, trianglesInfo)
     isempty(boundary_data) && error("No boundary edges found")
     
-    # 4. Compute voltage weights (estimate dimensions from actual edges)
+    # 5. Compute voltage weights (estimate dimensions from actual edges)
     edge_weights = _compute_edge_weights(boundary_data.centers, port)
     
-    # 5. Update port fields
+    # 6. Update port fields
     port.vertexIDs = vertex_ids
     port.triangleIDs = triangle_ids
     port.rwgIDs = boundary_data.rwgIDs
@@ -352,7 +375,7 @@ function bind_to_mesh!(
     port.edgeWeights = edge_weights
     port.isBound = true
     
-    # 6. Optionally estimate dimensions for mode impedance
+    # 7. Optionally estimate dimensions for mode impedance
     if estimateDimensions
         width, height = _estimate_dimensions_from_edges(port.edgeCenters, port.center,
                                                          port.widthDir, port.heightDir)
@@ -397,10 +420,7 @@ function sourceHfield(port::DeltaGapArrayPort{FT, IT, DT}, r::AbstractVector{FT}
 end
 
 
-# Note: excitationVectorEFIE, excitationVectorMFIE, excitationVectorCFIE
-# are now implemented in MoM_Kernels.jl/src/ZmatAndVvec/Ports/SurfacePortExcitation.jl
-# for consistency with the consumer-provider architecture where MoM_Kernels
-# provides all matrix/vector computation.
+# Excitation vector functions are implemented in MoM_Kernels.jl (SurfacePortExcitation.jl)
 
 
 # =============================================================================
@@ -510,10 +530,48 @@ function _compute_tolerance(trianglesInfo::Vector{TriangleInfo{IT, FT}}) where {
     return avg_edge * FT(1e-3)
 end
 
-function _collect_vertices_by_predicate(predicate, center, normal, tol, trianglesInfo)
-    IT = eltype(trianglesInfo[1].verticesID)
+"""
+    _collect_vertices_by_predicate(predicate, center, normal, tol, trianglesInfo)
+
+Collect the unique mesh vertex IDs that belong to the port cross-section candidate set.
+
+For every triangle in `trianglesInfo`, this helper inspects its three vertices and keeps a
+vertex when both of the following conditions are satisfied:
+
+1. The vertex lies close to the port plane, i.e.
+     `abs((vertex - center) ⋅ normal) <= tol`
+2. `predicate(vertex)` returns `true`
+
+The returned vector contains unique vertex IDs sorted in ascending order.
+
+# Arguments
+- `predicate` -- Function receiving a vertex position `MVec3D{FT}` and returning `true`
+    when that point is inside the intended port cross-section in the port plane.
+- `center` -- Reference point on the port plane.
+- `normal` -- Port-plane normal vector used to reject vertices that are too far away from
+    the plane.
+- `tol` -- Distance tolerance around the plane. This converts the ideal plane test into a
+    finite-thickness slab test to accommodate mesh/discretization error.
+- `trianglesInfo` -- Mesh triangles that provide both vertex coordinates and vertex IDs.
+
+# Returns
+- `Vector{IT}` -- Sorted unique vertex IDs passing the plane-distance and predicate tests.
+
+# Notes
+- This function performs a **vertex-level** filter only. It does not decide whether an
+    entire triangle belongs to the port region; that is handled later by
+    `_collect_triangles_by_vertices`.
+- `trianglesInfo` is assumed to be non-empty because element types are inferred from the
+    first triangle.
+"""
+function _collect_vertices_by_predicate(
+    predicate::Function,
+    center::MVec3D{FT},
+    normal::MVec3D{FT},
+    tol::FT,
+    trianglesInfo::Vector{TriangleInfo{IT, FT}}
+) where {FT<:Real, IT<:Integer}
     vertex_ids = Set{IT}()
-    FT = eltype(trianglesInfo[1].vertices)
     
     for tri in trianglesInfo
         for i in 1:3
@@ -541,9 +599,78 @@ function _collect_triangles_by_vertices(vertex_ids, trianglesInfo)
     return tri_ids
 end
 
-function _identify_boundary_edges(vertex_ids, triangle_ids, rwgsInfo, trianglesInfo)
-    IT = eltype(vertex_ids)
-    FT = eltype(trianglesInfo[1].vertices)
+"""
+    _identify_boundary_edges(
+        vertex_ids::Vector{IT},
+        triangle_ids::Vector{IT},
+        rwgsInfo::Vector{RWG{IT, FT}},
+        trianglesInfo::Vector{TriangleInfo{IT, FT}}
+    ) where {IT<:Integer, FT<:AbstractFloat}
+
+Identify RWG basis functions on the port boundary (perimeter edges).
+
+# Algorithm Description
+
+## Step 1: XOR Condition (Port Boundary Detection)
+Each RWG basis function spans two adjacent triangles: a "positive" triangle (`inGeo[1]`)
+and a "negative" triangle (`inGeo[2]`). A basis function lies on the port boundary if 
+**exactly one** of its adjacent triangles is inside the port region (XOR condition):
+
+```
+Boundary RWG ⇔ (tri⁺ ∈ port) ⊻ (tri⁻ ∈ port)
+```
+
+- If both triangles are inside: internal edge (not on boundary)
+- If both triangles are outside: external edge (not on boundary)  
+- If exactly one is inside: boundary edge (perimeter of port region)
+
+## Step 2: Vertex Verification
+After identifying candidate boundary RWGs via XOR, we verify that **both vertices** 
+of the edge lie within the port vertex set. This ensures the edge is truly part of 
+the port perimeter and handles edge cases where triangles straddle the boundary.
+
+## Step 3: Geometry Extraction
+For each verified boundary edge, extract:
+- `bfID`: RWG basis function ID (for excitation)
+- `inGeo`: Positive and negative triangle IDs (for field evaluation)
+- `edgel`: Edge length
+- Edge center and orientation vectors (for voltage weight computation)
+
+# Arguments
+- `vertex_ids::Vector{IT}` -- IDs of vertices inside the port region
+- `triangle_ids::Vector{IT}` -- IDs of triangles fully inside the port region
+- `rwgsInfo::Vector{RWG{IT, FT}}` -- All RWG basis functions in the mesh
+- `trianglesInfo::Vector{TriangleInfo{IT, FT}}` -- All triangles in the mesh
+
+# Returns
+Named tuple `(rwgIDs, triPos, triNeg, lengths, centers, orients)` where:
+- `rwgIDs::Vector{IT}` -- RWG basis function IDs on port boundary
+- `triPos::Vector{IT}` -- Positive triangle IDs for each boundary RWG (0 = aperture)
+- `triNeg::Vector{IT}` -- Negative triangle IDs for each boundary RWG (0 = aperture)
+- `lengths::Vector{FT}` -- Edge lengths
+- `centers::Vector{MVec3D{FT}}` -- Edge center positions
+- `orients::Vector{MVec3D{FT}}` -- Unit vectors along edge direction
+
+# Physical Interpretation
+
+The boundary edges form a **closed contour** (perimeter) around the port region.
+Each boundary RWG represents a half-basis function where:
+- One triangle is inside the port (carries current)
+- The other is outside the port (current terminates at boundary)
+
+These edges are where Delta-Gap voltage sources are applied to excite the port.
+
+# See Also
+- [`bind_to_mesh!`](@ref) -- Uses this function to identify excitation edges
+- [`_collect_triangles_by_vertices`](@ref) -- Identifies triangles from vertices
+"""
+function _identify_boundary_edges(
+    vertex_ids::Vector{IT},
+    triangle_ids::Vector{IT},
+    rwgsInfo::Vector{RWG{IT, FT}},
+    trianglesInfo::Vector{TriangleInfo{IT, FT}}
+) where {IT<:Integer, FT<:AbstractFloat}
+    
     vertex_set = Set(vertex_ids)
     triangle_set = Set(triangle_ids)
     
@@ -555,20 +682,23 @@ function _identify_boundary_edges(vertex_ids, triangle_ids, rwgsInfo, trianglesI
     orients = MVec3D{FT}[]
     
     for rwg in rwgsInfo
+        # Step 1: XOR condition - exactly one triangle is inside port
         tri_in_pos = rwg.inGeo[1] != 0 && rwg.inGeo[1] in triangle_set
         tri_in_neg = rwg.inGeo[2] != 0 && rwg.inGeo[2] in triangle_set
         (tri_in_pos ⊻ tri_in_neg) || continue
         
-        # Get edge geometry from attached triangle
+        # Step 2: Get edge geometry from the triangle inside the port
         tri_slot = rwg.inGeo[1] != 0 ? 1 : 2
         tri_id = rwg.inGeo[tri_slot]
         local_edge = rwg.inGeoID[tri_slot]
         tri = trianglesInfo[tri_id]
         
+        # Step 3: Verify both edge vertices are in port vertex set
         v1_id = tri.verticesID[EDGEVmINTriVsID[local_edge]]
         v2_id = tri.verticesID[EDGEVpINTriVsID[local_edge]]
         (v1_id in vertex_set && v2_id in vertex_set) || continue
         
+        # Step 4: Extract edge geometry
         p1 = MVec3D{FT}(tri.vertices[:, EDGEVmINTriVsID[local_edge]])
         p2 = MVec3D{FT}(tri.vertices[:, EDGEVpINTriVsID[local_edge]])
         
@@ -642,8 +772,7 @@ function _estimate_dimensions_from_edges(centers, port_center, wdir, hdir)
     return 2 * max_u, 2 * max_v
 end
 
-# Note: _excitation_array! and _excitation_single_edge! are now implemented in
-# MoM_Kernels.jl/src/ZmatAndVvec/Ports/SurfacePortExcitation.jl
+# _excitation_array! and _excitation_single_edge! are implemented in MoM_Kernels.jl (SurfacePortExcitation.jl)
 
 
 # =============================================================================
@@ -651,12 +780,16 @@ end
 # =============================================================================
 
 """
-    RectangularDeltaGapPort(; center, normal, width, height, kwargs...)
+    RectangularDeltaGapPort(; center, normal, width, height, forcePortPEC=true, kwargs...)
 
 Create a rectangular port, bound to mesh immediately.
 
 This is a convenience constructor for the common rectangular case.
 For deferred binding, use `DeltaGapArrayPort` + `bind_to_mesh!`.
+
+# Keyword Arguments
+- `forcePortPEC::Bool = true` -- Set surface impedance `Zs = 0` (PEC) on port triangles.
+  See [`bind_to_mesh!`](@ref) for details.
 """
 function RectangularDeltaGapPort(;
     center::AbstractVector{FT},
@@ -666,6 +799,7 @@ function RectangularDeltaGapPort(;
     widthDir::AbstractVector{FT} = zeros(FT, 3),
     trianglesInfo::Vector{TriangleInfo{IT, FT}},
     rwgsInfo::Vector{RWG{IT, FT}},
+    forcePortPEC::Bool = true,
     kwargs...
 ) where {FT<:Real, IT<:Integer}
     
@@ -688,7 +822,8 @@ function RectangularDeltaGapPort(;
     end
     
     # Bind to mesh
-    bind_to_mesh!(port, predicate, trianglesInfo, rwgsInfo; estimateDimensions=false)
+    bind_to_mesh!(port, predicate, trianglesInfo, rwgsInfo; 
+                  estimateDimensions=false, forcePortPEC=forcePortPEC)
     
     # Set known dimensions
     port.modeImpedance = _compute_mode_impedance_generic(
@@ -699,9 +834,13 @@ function RectangularDeltaGapPort(;
 end
 
 """
-    CircularDeltaGapPort(; center, normal, radius, trianglesInfo, rwgsInfo, kwargs...)
+    CircularDeltaGapPort(; center, normal, radius, forcePortPEC=true, kwargs...)
 
 Create a circular port, bound to mesh immediately.
+
+# Keyword Arguments
+- `forcePortPEC::Bool = true` -- Set surface impedance `Zs = 0` (PEC) on port triangles.
+  See [`bind_to_mesh!`](@ref) for details.
 """
 function CircularDeltaGapPort(;
     center::AbstractVector{FT},
@@ -709,6 +848,7 @@ function CircularDeltaGapPort(;
     radius::FT,
     trianglesInfo::Vector{TriangleInfo{IT, FT}},
     rwgsInfo::Vector{RWG{IT, FT}},
+    forcePortPEC::Bool = true,
     kwargs...
 ) where {FT<:Real, IT<:Integer}
     
@@ -733,7 +873,7 @@ function CircularDeltaGapPort(;
         end
     end
     
-    bind_to_mesh!(port, predicate, trianglesInfo, rwgsInfo)
+    bind_to_mesh!(port, predicate, trianglesInfo, rwgsInfo; forcePortPEC=forcePortPEC)
     return port
 end
 

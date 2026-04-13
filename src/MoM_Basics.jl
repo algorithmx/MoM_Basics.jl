@@ -72,7 +72,12 @@ export  Vec3D, SVec3D, MVec3D, random_rhat,
         AbstractIntegralEquation, EFIE, MFIE, CFIE,
         AbstractAntennaArray, taylorwin, AntennaArray, distance,
         antennaArray, setdiffArray!,
-        timer, memory, @clock, show_memory_time
+        timer, memory, @clock, show_memory_time,
+        # Green's function types and configuration (new for layered media support)
+        AbstractGreenFunction, FreeSpaceGF, GroundPlaneGF, LayeredMediaGF,
+        GreenFuncVals, evaluate_greenfunc, evaluate_greenfunc_A, evaluate_greenfunc_phi,
+        create_green_function, set_layer_stack!, horizontal_distance, mirror_point_across_ground,
+        LayerStack, LayerInfo, DCIMCoefficients, ComplexImage
 
 
 ## 记录程序运行内存占用情况
@@ -103,5 +108,9 @@ include("Sources/Port.jl")
 
 ## 计算质量检查
 include("SanityChecks.jl")
+
+## Green's Function module (layered media and ground plane support)
+include("GreenFunction/GreenFunction.jl")
+@reexport using .GreenFunction
 
 end
